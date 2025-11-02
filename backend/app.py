@@ -6,7 +6,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from scipy.optimize import linprog
 import pandas as pd
-from typing import List, Dict, TupleGit
+from typing import List, Dict, Tuple
 import json
 
 app = Flask(__name__)
