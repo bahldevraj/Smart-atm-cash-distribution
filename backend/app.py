@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from datetime import datetime, timedelta
@@ -8,12 +8,21 @@ from scipy.optimize import linprog
 import pandas as pd
 from typing import List, Dict, Tuple
 import json
+import io
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///smart_atm.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 CORS(app)
+
+# Import and register ML API routes
+try:
+    from ml_api import register_ml_routes
+    ML_API_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠ Warning: ML API not available: {e}")
+    ML_API_AVAILABLE = False
 
 # Database Models
 class Vault(db.Model):
@@ -54,6 +63,25 @@ class ATM(db.Model):
             'created_at': self.created_at.isoformat()
         }
 
+class TransactionSection(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.String(500))
+    color = db.Column(db.String(20), default='blue')  # Color for UI
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    is_default = db.Column(db.Boolean, default=False)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'color': self.color,
+            'created_at': self.created_at.isoformat(),
+            'is_default': self.is_default,
+            'transaction_count': Transaction.query.filter_by(section_id=self.id).count()
+        }
+
 class Transaction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     vault_id = db.Column(db.Integer, db.ForeignKey('vault.id'), nullable=False)
@@ -61,9 +89,12 @@ class Transaction(db.Model):
     amount = db.Column(db.Float, nullable=False)
     transaction_type = db.Column(db.String(50), nullable=False)  # 'allocation', 'withdrawal'
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    section_id = db.Column(db.Integer, db.ForeignKey('transaction_section.id'), nullable=True)
+    notes = db.Column(db.String(500))  # Optional notes for imported data
     
     vault = db.relationship('Vault', backref=db.backref('transactions', lazy=True))
     atm = db.relationship('ATM', backref=db.backref('transactions', lazy=True))
+    section = db.relationship('TransactionSection', backref=db.backref('transactions', lazy=True))
     
     def to_dict(self):
         return {
@@ -74,7 +105,10 @@ class Transaction(db.Model):
             'transaction_type': self.transaction_type,
             'timestamp': self.timestamp.isoformat(),
             'vault_name': self.vault.name if self.vault else None,
-            'atm_name': self.atm.name if self.atm else None
+            'atm_name': self.atm.name if self.atm else None,
+            'section_id': self.section_id,
+            'section_name': self.section.name if self.section else None,
+            'notes': self.notes
         }
 
 class DemandHistory(db.Model):
@@ -408,6 +442,428 @@ def get_transactions():
         'current_page': page
     })
 
+@app.route('/api/transactions/history', methods=['GET'])
+def get_transaction_history():
+    """Advanced transaction history with filtering, sorting, and pagination"""
+    # Pagination parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    
+    # Sorting parameters
+    sort_by = request.args.get('sort_by', 'timestamp')  # timestamp, amount, atm_name, type
+    sort_order = request.args.get('sort_order', 'desc')  # asc or desc
+    
+    # Filter parameters
+    filter_type = request.args.get('filter_type', None)  # withdrawal, deposit, allocation, balance_check
+    filter_atm_id = request.args.get('filter_atm_id', None, type=int)
+    filter_vault_id = request.args.get('filter_vault_id', None, type=int)
+    filter_section_id = request.args.get('filter_section_id', None, type=int)
+    date_from = request.args.get('date_from', None)
+    date_to = request.args.get('date_to', None)
+    search = request.args.get('search', None)
+    min_amount = request.args.get('min_amount', None, type=float)
+    max_amount = request.args.get('max_amount', None, type=float)
+    time_period = request.args.get('time_period', None)  # morning, afternoon, evening, night
+    
+    # Build query
+    query = Transaction.query
+    
+    # Apply filters
+    if filter_type:
+        query = query.filter(Transaction.transaction_type == filter_type)
+    
+    if filter_atm_id:
+        query = query.filter(Transaction.atm_id == filter_atm_id)
+    
+    if filter_vault_id:
+        query = query.filter(Transaction.vault_id == filter_vault_id)
+    
+    if filter_section_id:
+        query = query.filter(Transaction.section_id == filter_section_id)
+    
+    if min_amount is not None:
+        query = query.filter(Transaction.amount >= min_amount)
+    
+    if max_amount is not None:
+        query = query.filter(Transaction.amount <= max_amount)
+    
+    if time_period:
+        if time_period == 'morning':  # 6 AM - 12 PM
+            query = query.filter(db.extract('hour', Transaction.timestamp) >= 6)
+            query = query.filter(db.extract('hour', Transaction.timestamp) < 12)
+        elif time_period == 'afternoon':  # 12 PM - 6 PM
+            query = query.filter(db.extract('hour', Transaction.timestamp) >= 12)
+            query = query.filter(db.extract('hour', Transaction.timestamp) < 18)
+        elif time_period == 'evening':  # 6 PM - 12 AM
+            query = query.filter(db.extract('hour', Transaction.timestamp) >= 18)
+            query = query.filter(db.extract('hour', Transaction.timestamp) < 24)
+        elif time_period == 'night':  # 12 AM - 6 AM
+            query = query.filter(db.extract('hour', Transaction.timestamp) >= 0)
+            query = query.filter(db.extract('hour', Transaction.timestamp) < 6)
+    
+    if date_from:
+        try:
+            date_from_obj = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            query = query.filter(Transaction.timestamp >= date_from_obj)
+        except:
+            pass
+    
+    if date_to:
+        try:
+            date_to_obj = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            # Add one day to include the entire end date
+            date_to_obj = date_to_obj + timedelta(days=1)
+            query = query.filter(Transaction.timestamp < date_to_obj)
+        except:
+            pass
+    
+    # Apply search (search in ATM name)
+    if search:
+        query = query.join(ATM).filter(ATM.name.ilike(f'%{search}%'))
+    
+    # Apply sorting
+    if sort_by == 'amount':
+        order_col = Transaction.amount
+    elif sort_by == 'type':
+        order_col = Transaction.transaction_type
+    elif sort_by == 'atm_name':
+        query = query.join(ATM)
+        order_col = ATM.name
+    else:  # Default to timestamp
+        order_col = Transaction.timestamp
+    
+    if sort_order == 'asc':
+        query = query.order_by(order_col.asc())
+    else:
+        query = query.order_by(order_col.desc())
+    
+    # Get total count before pagination
+    total_count = query.count()
+    
+    # Apply pagination
+    transactions = query.paginate(page=page, per_page=per_page, error_out=False)
+    
+    # Calculate summary statistics for filtered results
+    summary_query = Transaction.query
+    if filter_type:
+        summary_query = summary_query.filter(Transaction.transaction_type == filter_type)
+    if filter_atm_id:
+        summary_query = summary_query.filter(Transaction.atm_id == filter_atm_id)
+    if filter_vault_id:
+        summary_query = summary_query.filter(Transaction.vault_id == filter_vault_id)
+    if filter_section_id:
+        summary_query = summary_query.filter(Transaction.section_id == filter_section_id)
+    if min_amount is not None:
+        summary_query = summary_query.filter(Transaction.amount >= min_amount)
+    if max_amount is not None:
+        summary_query = summary_query.filter(Transaction.amount <= max_amount)
+    if time_period:
+        if time_period == 'morning':
+            summary_query = summary_query.filter(db.extract('hour', Transaction.timestamp) >= 6)
+            summary_query = summary_query.filter(db.extract('hour', Transaction.timestamp) < 12)
+        elif time_period == 'afternoon':
+            summary_query = summary_query.filter(db.extract('hour', Transaction.timestamp) >= 12)
+            summary_query = summary_query.filter(db.extract('hour', Transaction.timestamp) < 18)
+        elif time_period == 'evening':
+            summary_query = summary_query.filter(db.extract('hour', Transaction.timestamp) >= 18)
+            summary_query = summary_query.filter(db.extract('hour', Transaction.timestamp) < 24)
+        elif time_period == 'night':
+            summary_query = summary_query.filter(db.extract('hour', Transaction.timestamp) >= 0)
+            summary_query = summary_query.filter(db.extract('hour', Transaction.timestamp) < 6)
+    if date_from:
+        try:
+            date_from_obj = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            summary_query = summary_query.filter(Transaction.timestamp >= date_from_obj)
+        except:
+            pass
+    if date_to:
+        try:
+            date_to_obj = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            date_to_obj = date_to_obj + timedelta(days=1)
+            summary_query = summary_query.filter(Transaction.timestamp < date_to_obj)
+        except:
+            pass
+    if search:
+        summary_query = summary_query.join(ATM).filter(ATM.name.ilike(f'%{search}%'))
+    
+    # Calculate totals
+    all_filtered = summary_query.all()
+    total_amount = sum(t.amount for t in all_filtered)
+    
+    # Count by type
+    withdrawals = [t for t in all_filtered if t.transaction_type == 'withdrawal']
+    deposits = [t for t in all_filtered if t.transaction_type == 'deposit']
+    allocations = [t for t in all_filtered if t.transaction_type == 'allocation']
+    balance_checks = [t for t in all_filtered if t.transaction_type == 'balance_check']
+    
+    withdrawal_total = sum(t.amount for t in withdrawals)
+    deposit_total = sum(t.amount for t in deposits)
+    allocation_total = sum(t.amount for t in allocations)
+    
+    avg_transaction = total_amount / len(all_filtered) if all_filtered else 0
+    
+    # Get date range
+    if all_filtered:
+        dates = [t.timestamp for t in all_filtered]
+        date_range = f"{min(dates).strftime('%b %d, %Y')} to {max(dates).strftime('%b %d, %Y')}"
+    else:
+        date_range = "No data"
+    
+    return jsonify({
+        'transactions': [t.to_dict() for t in transactions.items],
+        'total': total_count,
+        'pages': transactions.pages,
+        'current_page': page,
+        'per_page': per_page,
+        'summary': {
+            'total_transactions': len(all_filtered),
+            'total_amount': round(total_amount, 2),
+            'total_withdrawals': len(withdrawals),
+            'total_deposits': len(deposits),
+            'total_allocations': len(allocations),
+            'total_balance_checks': len(balance_checks),
+            'withdrawal_amount': round(withdrawal_total, 2),
+            'deposit_amount': round(deposit_total, 2),
+            'allocation_amount': round(allocation_total, 2),
+            'avg_transaction': round(avg_transaction, 2),
+            'date_range': date_range
+        }
+    })
+
+@app.route('/api/transactions/export-csv', methods=['GET'])
+def export_transactions_csv():
+    """Export filtered transactions to CSV"""
+    # Get all filter parameters (same as history endpoint)
+    filter_type = request.args.get('filter_type', None)
+    filter_atm_id = request.args.get('filter_atm_id', None, type=int)
+    filter_vault_id = request.args.get('filter_vault_id', None, type=int)
+    date_from = request.args.get('date_from', None)
+    date_to = request.args.get('date_to', None)
+    search = request.args.get('search', None)
+    min_amount = request.args.get('min_amount', None, type=float)
+    max_amount = request.args.get('max_amount', None, type=float)
+    time_period = request.args.get('time_period', None)
+    
+    # Build query with same filters
+    query = Transaction.query
+    
+    if filter_type:
+        query = query.filter(Transaction.transaction_type == filter_type)
+    if filter_atm_id:
+        query = query.filter(Transaction.atm_id == filter_atm_id)
+    if filter_vault_id:
+        query = query.filter(Transaction.vault_id == filter_vault_id)
+    if min_amount is not None:
+        query = query.filter(Transaction.amount >= min_amount)
+    if max_amount is not None:
+        query = query.filter(Transaction.amount <= max_amount)
+    if time_period:
+        if time_period == 'morning':
+            query = query.filter(db.extract('hour', Transaction.timestamp) >= 6)
+            query = query.filter(db.extract('hour', Transaction.timestamp) < 12)
+        elif time_period == 'afternoon':
+            query = query.filter(db.extract('hour', Transaction.timestamp) >= 12)
+            query = query.filter(db.extract('hour', Transaction.timestamp) < 18)
+        elif time_period == 'evening':
+            query = query.filter(db.extract('hour', Transaction.timestamp) >= 18)
+            query = query.filter(db.extract('hour', Transaction.timestamp) < 24)
+        elif time_period == 'night':
+            query = query.filter(db.extract('hour', Transaction.timestamp) >= 0)
+            query = query.filter(db.extract('hour', Transaction.timestamp) < 6)
+    if date_from:
+        try:
+            date_from_obj = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            query = query.filter(Transaction.timestamp >= date_from_obj)
+        except:
+            pass
+    if date_to:
+        try:
+            date_to_obj = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            date_to_obj = date_to_obj + timedelta(days=1)
+            query = query.filter(Transaction.timestamp < date_to_obj)
+        except:
+            pass
+    if search:
+        query = query.join(ATM).filter(ATM.name.ilike(f'%{search}%'))
+    
+    # Get all matching transactions
+    transactions = query.order_by(Transaction.timestamp.desc()).all()
+    
+    # Convert to DataFrame with import-compatible format
+    data = []
+    for txn in transactions:
+        data.append({
+            'atm_id': txn.atm_id,
+            'vault_id': txn.vault_id,
+            'amount': txn.amount,
+            'transaction_type': txn.transaction_type,
+            'timestamp': txn.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            'notes': txn.notes if txn.notes else ''
+        })
+    
+    df = pd.DataFrame(data)
+    
+    # Create CSV in memory
+    output = io.StringIO()
+    df.to_csv(output, index=False)
+    csv_data = output.getvalue()
+    
+    # Create response
+    response = make_response(csv_data)
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = f'attachment; filename=transactions_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+    
+    return response
+
+# Transaction Sections Management
+@app.route('/api/transaction-sections', methods=['GET'])
+def get_transaction_sections():
+    """Get all transaction sections"""
+    sections = TransactionSection.query.order_by(TransactionSection.created_at.desc()).all()
+    return jsonify([section.to_dict() for section in sections])
+
+@app.route('/api/transaction-sections', methods=['POST'])
+def create_transaction_section():
+    """Create a new transaction section"""
+    data = request.json
+    
+    # Validate required fields
+    if not data.get('name'):
+        return jsonify({'error': 'Section name is required'}), 400
+    
+    # Check if name already exists
+    existing = TransactionSection.query.filter_by(name=data['name']).first()
+    if existing:
+        return jsonify({'error': 'Section name already exists'}), 400
+    
+    section = TransactionSection(
+        name=data['name'],
+        description=data.get('description', ''),
+        color=data.get('color', 'blue'),
+        is_default=data.get('is_default', False)
+    )
+    
+    db.session.add(section)
+    db.session.commit()
+    
+    return jsonify(section.to_dict()), 201
+
+@app.route('/api/transaction-sections/<int:section_id>', methods=['PUT'])
+def update_transaction_section(section_id):
+    """Update a transaction section"""
+    section = TransactionSection.query.get_or_404(section_id)
+    data = request.json
+    
+    if data.get('name'):
+        section.name = data['name']
+    if data.get('description') is not None:
+        section.description = data['description']
+    if data.get('color'):
+        section.color = data['color']
+    if data.get('is_default') is not None:
+        section.is_default = data['is_default']
+    
+    db.session.commit()
+    return jsonify(section.to_dict())
+
+@app.route('/api/transaction-sections/<int:section_id>', methods=['DELETE'])
+def delete_transaction_section(section_id):
+    """Delete a transaction section"""
+    section = TransactionSection.query.get_or_404(section_id)
+    
+    # Check if section has transactions
+    txn_count = Transaction.query.filter_by(section_id=section_id).count()
+    if txn_count > 0:
+        return jsonify({'error': f'Cannot delete section with {txn_count} transactions'}), 400
+    
+    db.session.delete(section)
+    db.session.commit()
+    
+    return jsonify({'message': 'Section deleted successfully'})
+
+# CSV Import for Transactions
+@app.route('/api/transactions/import-csv', methods=['POST'])
+def import_transactions_csv():
+    """Import transactions from CSV file"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    if not file.filename.endswith('.csv'):
+        return jsonify({'error': 'File must be a CSV'}), 400
+    
+    try:
+        # Read CSV file
+        df = pd.read_csv(file)
+        
+        # Validate required columns
+        required_columns = ['atm_id', 'vault_id', 'amount', 'transaction_type', 'timestamp']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            return jsonify({'error': f'Missing required columns: {", ".join(missing_columns)}'}), 400
+        
+        # Get optional section_id from form data
+        section_id = request.form.get('section_id', None, type=int)
+        
+        # Import transactions
+        imported_count = 0
+        errors = []
+        
+        for index, row in df.iterrows():
+            try:
+                # Validate ATM and Vault exist
+                atm = ATM.query.get(int(row['atm_id']))
+                vault = Vault.query.get(int(row['vault_id']))
+                
+                if not atm:
+                    errors.append(f"Row {index+1}: ATM ID {row['atm_id']} not found")
+                    continue
+                
+                if not vault:
+                    errors.append(f"Row {index+1}: Vault ID {row['vault_id']} not found")
+                    continue
+                
+                # Parse timestamp
+                try:
+                    timestamp = pd.to_datetime(row['timestamp'])
+                except:
+                    errors.append(f"Row {index+1}: Invalid timestamp format")
+                    continue
+                
+                # Create transaction
+                transaction = Transaction(
+                    atm_id=int(row['atm_id']),
+                    vault_id=int(row['vault_id']),
+                    amount=float(row['amount']),
+                    transaction_type=str(row['transaction_type']),
+                    timestamp=timestamp,
+                    section_id=section_id,
+                    notes=row.get('notes', None)
+                )
+                
+                db.session.add(transaction)
+                imported_count += 1
+                
+            except Exception as e:
+                errors.append(f"Row {index+1}: {str(e)}")
+        
+        # Commit all transactions
+        db.session.commit()
+        
+        return jsonify({
+            'message': f'Successfully imported {imported_count} transactions',
+            'imported_count': imported_count,
+            'total_rows': len(df),
+            'errors': errors[:10]  # Return first 10 errors
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to import CSV: {str(e)}'}), 500
+
 @app.route('/api/forecast/<int:atm_id>', methods=['GET'])
 def forecast_demand(atm_id):
     days_ahead = request.args.get('days_ahead', 1, type=int)
@@ -478,4 +934,19 @@ def create_tables():
 
 if __name__ == '__main__':
     create_tables()   # Run DB setup when app starts
+    
+    # Register ML API routes if available
+    if ML_API_AVAILABLE:
+        try:
+            register_ml_routes(app)
+        except Exception as e:
+            print(f"⚠ Warning: Could not register ML API routes: {e}")
+    else:
+        print("⚠ ML API not loaded - advanced forecasting features unavailable")
+    
+    print("\n🚀 Starting Smart ATM System Backend...")
+    print("📍 Backend running on: http://127.0.0.1:5000")
+    print("📊 ML API endpoints available at: /api/ml/*")
+    print("\n")
+    
     app.run(debug=True, port=5000)
