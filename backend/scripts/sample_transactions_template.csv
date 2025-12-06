@@ -1,0 +1,7 @@
+atm_id,vault_id,amount,transaction_type,timestamp,notes
+1,1,500.00,withdrawal,2025-11-03 14:30:00,Sample withdrawal
+1,1,1000.00,deposit,2025-11-03 15:00:00,Sample deposit
+2,1,20000.00,allocation,2025-11-03 16:00:00,Vault allocation
+3,2,250.00,withdrawal,2025-11-03 17:00:00,Evening withdrawal
+4,2,15000.00,allocation,2025-11-03 18:00:00,Cash replenishment
+5,1,0.00,balance_check,2025-11-03 19:00:00,Balance inquiry
