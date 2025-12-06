@@ -13,7 +13,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Add ml_models to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'ml_models'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'ml_models'))
 
 from forecasting_models import (
     ARIMAForecaster, 
@@ -23,8 +23,8 @@ from forecasting_models import (
 )
 
 # Configuration
-DATA_FILE = os.path.join(os.path.dirname(__file__), '..', 'ml_models', 'data', 'atm_demand_data.csv')
-MODELS_DIR = os.path.join(os.path.dirname(__file__), '..', 'ml_models', 'saved_models')
+DATA_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'ml_models', 'data', 'atm_demand_clean.csv')
+MODELS_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'ml_models', 'saved_models')
 
 # Ensure models directory exists
 os.makedirs(MODELS_DIR, exist_ok=True)
