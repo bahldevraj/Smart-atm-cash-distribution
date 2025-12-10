@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from sqlalchemy import text, Index
 from datetime import datetime, timedelta
 import numpy as np
 from sklearn.linear_model import LinearRegression
@@ -9,12 +10,51 @@ import pandas as pd
 from typing import List, Dict, Tuple
 import json
 import io
+from functools import lru_cache, wraps
+import time
+import jwt
+import secrets
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from werkzeug.security import generate_password_hash, check_password_hash
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///smart_atm.db'
+
+# Database configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI', 'sqlite:///smart_atm.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ECHO'] = False  # Disable SQL logging for performance
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_size': 10,
+    'pool_recycle': 3600,
+    'pool_pre_ping': True
+}
+
+# Security configuration - Load from environment variables
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'dev-jwt-secret-key-change-in-production')
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
+
+# Email configuration - Load from environment variables
+app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'True') == 'True'
+app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME', '')
+app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD', '')
+app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', '')
+
 db = SQLAlchemy(app)
-CORS(app)
+CORS(app, supports_credentials=True)
+
+# Simple in-memory cache for frequently accessed data
+cache = {}
+CACHE_TIMEOUT = 60  # 60 seconds
 
 # Import and register ML API routes
 try:
@@ -24,7 +64,156 @@ except ImportError as e:
     print(f"⚠ Warning: ML API not available: {e}")
     ML_API_AVAILABLE = False
 
+# Import and register AI Recommendations API routes
+try:
+    from ai_recommendations import register_ai_routes
+    AI_API_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠ Warning: AI Recommendations API not available: {e}")
+    AI_API_AVAILABLE = False
+
+# Cache helper functions
+def get_cache(key):
+    if key in cache:
+        data, timestamp = cache[key]
+        if time.time() - timestamp < CACHE_TIMEOUT:
+            return data
+    return None
+
+def set_cache(key, value):
+    cache[key] = (value, time.time())
+
+def clear_cache():
+    cache.clear()
+
+# Authentication helper functions
+def send_verification_email(email, token):
+    """Send email verification link"""
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = 'Verify Your Smart ATM System Email'
+        msg['From'] = app.config['MAIL_DEFAULT_SENDER']
+        msg['To'] = email
+        
+        verification_url = f"http://localhost:3000/verify-email?token={token}"
+        
+        html = f"""
+        <html>
+          <body style="font-family: Arial, sans-serif; padding: 20px;">
+            <h2>Welcome to Smart ATM Cash Optimizer!</h2>
+            <p>Please verify your email address to activate your account.</p>
+            <p>Click the button below to verify your email:</p>
+            <a href="{verification_url}" style="display: inline-block; padding: 12px 24px; background-color: #3B82F6; color: white; text-decoration: none; border-radius: 5px;">Verify Email</a>
+            <p>Or copy and paste this link into your browser:</p>
+            <p>{verification_url}</p>
+            <p>This link will expire in 24 hours.</p>
+            <p>If you didn't create an account, please ignore this email.</p>
+          </body>
+        </html>
+        """
+        
+        part = MIMEText(html, 'html')
+        msg.attach(part)
+        
+        with smtplib.SMTP(app.config['MAIL_SERVER'], app.config['MAIL_PORT']) as server:
+            server.starttls()
+            server.login(app.config['MAIL_USERNAME'], app.config['MAIL_PASSWORD'])
+            server.send_message(msg)
+        
+        return True
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        return False
+
+def generate_token(user_id):
+    """Generate JWT access token"""
+    payload = {
+        'user_id': user_id,
+        'exp': datetime.utcnow() + app.config['JWT_ACCESS_TOKEN_EXPIRES'],
+        'iat': datetime.utcnow()
+    }
+    return jwt.encode(payload, app.config['JWT_SECRET_KEY'], algorithm='HS256')
+
+def decode_token(token):
+    """Decode and verify JWT token"""
+    try:
+        payload = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+        return payload['user_id']
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+def token_required(f):
+    """Decorator to protect routes with JWT authentication"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            try:
+                token = auth_header.split(' ')[1]  # Bearer <token>
+            except IndexError:
+                return jsonify({'error': 'Invalid token format'}), 401
+        
+        if not token:
+            return jsonify({'error': 'Authentication token is missing'}), 401
+        
+        user_id = decode_token(token)
+        if user_id is None:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 401
+        
+        return f(user, *args, **kwargs)
+    
+    return decorated
+
 # Database Models
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
+    is_verified = db.Column(db.Boolean, default=True)  # Auto-verified, no email verification needed
+    is_approved = db.Column(db.Boolean, default=False)  # Requires root approval
+    is_root = db.Column(db.Boolean, default=False)  # Root admin user
+    verification_token = db.Column(db.String(100), unique=True, nullable=True)
+    reset_token = db.Column(db.String(100), unique=True, nullable=True)
+    reset_token_expires = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_login = db.Column(db.DateTime, nullable=True)
+    
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+    
+    def generate_verification_token(self):
+        self.verification_token = secrets.token_urlsafe(32)
+        return self.verification_token
+    
+    def generate_reset_token(self):
+        self.reset_token = secrets.token_urlsafe(32)
+        self.reset_token_expires = datetime.utcnow() + timedelta(hours=1)
+        return self.reset_token
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'email': self.email,
+            'is_verified': self.is_verified,
+            'is_approved': self.is_approved,
+            'is_root': self.is_root,
+            'created_at': self.created_at.isoformat(),
+            'last_login': self.last_login.isoformat() if self.last_login else None
+        }
+
 class Vault(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
@@ -40,7 +229,7 @@ class Vault(db.Model):
             'location': self.location,
             'capacity': self.capacity,
             'current_balance': self.current_balance,
-            'created_at': self.created_at.isoformat()
+            'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
 class ATM(db.Model):
@@ -60,7 +249,7 @@ class ATM(db.Model):
             'capacity': self.capacity,
             'current_balance': self.current_balance,
             'daily_avg_demand': self.daily_avg_demand,
-            'created_at': self.created_at.isoformat()
+            'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
 class TransactionSection(db.Model):
@@ -296,11 +485,224 @@ class ForecastingEngine:
             atm = ATM.query.get(atm_id)
             return atm.daily_avg_demand if atm else 5000.0
 
+# Authentication API Routes
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """Register a new user"""
+    data = request.get_json()
+    
+    # Validate input
+    if not data or not data.get('email') or not data.get('password'):
+        return jsonify({'error': 'Email and password are required'}), 400
+    
+    email = data['email'].lower().strip()
+    password = data['password']
+    name = data.get('name', '').strip()
+    
+    # Check if user already exists
+    if User.query.filter_by(email=email).first():
+        return jsonify({'error': 'Email already registered'}), 400
+    
+    # Create new user (is_approved=False by default, requires root approval)
+    # is_verified is True by default (no email verification needed)
+    user = User(email=email, name=name, is_approved=False, is_verified=True)
+    user.set_password(password)
+    
+    db.session.add(user)
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Registration successful! Your account is pending approval by the administrator. You will be able to login once approved.',
+        'email': email
+    }), 201
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """Login user"""
+    data = request.get_json()
+    
+    if not data or not data.get('email') or not data.get('password'):
+        return jsonify({'error': 'Email and password are required'}), 400
+    
+    email = data['email'].lower().strip()
+    password = data['password']
+    
+    user = User.query.filter_by(email=email).first()
+    
+    if not user or not user.check_password(password):
+        return jsonify({'error': 'Invalid email or password'}), 401
+    
+    # Check if user is approved (root user bypasses this check)
+    if not user.is_root and not user.is_approved:
+        return jsonify({'error': 'Your account is pending approval by the administrator. Please wait for approval.'}), 403
+    
+    # Update last login
+    user.last_login = datetime.utcnow()
+    db.session.commit()
+    
+    # Generate token
+    token = generate_token(user.id)
+    
+    return jsonify({
+        'message': 'Login successful',
+        'token': token,
+        'user': user.to_dict()
+    }), 200
+
+@app.route('/api/auth/verify-email', methods=['POST'])
+def verify_email():
+    """Verify email with token"""
+    data = request.get_json()
+    
+    if not data or not data.get('token'):
+        return jsonify({'error': 'Verification token is required'}), 400
+    
+    token = data['token']
+    user = User.query.filter_by(verification_token=token).first()
+    
+    if not user:
+        return jsonify({'error': 'Invalid or expired verification token'}), 400
+    
+    if user.is_verified:
+        return jsonify({'message': 'Email already verified'}), 200
+    
+    user.is_verified = True
+    user.verification_token = None
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Email verified successfully. You can now log in.',
+        'user': user.to_dict()
+    }), 200
+
+@app.route('/api/auth/resend-verification', methods=['POST'])
+def resend_verification():
+    """Resend verification email"""
+    data = request.get_json()
+    
+    if not data or not data.get('email'):
+        return jsonify({'error': 'Email is required'}), 400
+    
+    email = data['email'].lower().strip()
+    user = User.query.filter_by(email=email).first()
+    
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    if user.is_verified:
+        return jsonify({'message': 'Email already verified'}), 200
+    
+    token = user.generate_verification_token()
+    db.session.commit()
+    
+    if send_verification_email(email, token):
+        return jsonify({'message': 'Verification email sent successfully'}), 200
+    else:
+        return jsonify({'error': 'Failed to send verification email'}), 500
+
+@app.route('/api/auth/me', methods=['GET'])
+@token_required
+def get_current_user(user):
+    """Get current user info"""
+    return jsonify(user.to_dict()), 200
+
+@app.route('/api/auth/logout', methods=['POST'])
+@token_required
+def logout(user):
+    """Logout user (client-side token removal)"""
+    return jsonify({'message': 'Logged out successfully'}), 200
+
+# Access Control Routes (Root Admin Only)
+@app.route('/api/admin/users', methods=['GET'])
+@token_required
+def get_all_users(user):
+    """Get all users (root only)"""
+    if not user.is_root:
+        return jsonify({'error': 'Access denied. Root privileges required.'}), 403
+    
+    users = User.query.order_by(User.created_at.desc()).all()
+    return jsonify({
+        'users': [u.to_dict() for u in users],
+        'total': len(users)
+    }), 200
+
+@app.route('/api/admin/users/<int:user_id>/approve', methods=['POST'])
+@token_required
+def approve_user(user, user_id):
+    """Approve a user (root only)"""
+    if not user.is_root:
+        return jsonify({'error': 'Access denied. Root privileges required.'}), 403
+    
+    target_user = User.query.get(user_id)
+    if not target_user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    if target_user.is_root:
+        return jsonify({'error': 'Cannot modify root user'}), 400
+    
+    target_user.is_approved = True
+    db.session.commit()
+    
+    return jsonify({
+        'message': f'User {target_user.email} approved successfully',
+        'user': target_user.to_dict()
+    }), 200
+
+@app.route('/api/admin/users/<int:user_id>/revoke', methods=['POST'])
+@token_required
+def revoke_user(user, user_id):
+    """Revoke user access (root only)"""
+    if not user.is_root:
+        return jsonify({'error': 'Access denied. Root privileges required.'}), 403
+    
+    target_user = User.query.get(user_id)
+    if not target_user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    if target_user.is_root:
+        return jsonify({'error': 'Cannot modify root user'}), 400
+    
+    target_user.is_approved = False
+    db.session.commit()
+    
+    return jsonify({
+        'message': f'Access revoked for user {target_user.email}',
+        'user': target_user.to_dict()
+    }), 200
+
+@app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
+@token_required
+def delete_user(user, user_id):
+    """Delete a user (root only)"""
+    if not user.is_root:
+        return jsonify({'error': 'Access denied. Root privileges required.'}), 403
+    
+    target_user = User.query.get(user_id)
+    if not target_user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    if target_user.is_root:
+        return jsonify({'error': 'Cannot delete root user'}), 400
+    
+    email = target_user.email
+    db.session.delete(target_user)
+    db.session.commit()
+    
+    return jsonify({
+        'message': f'User {email} deleted successfully'
+    }), 200
+
 # API Routes
 @app.route('/api/vaults', methods=['GET'])
 def get_vaults():
+    cached = get_cache('vaults')
+    if cached:
+        return jsonify(cached)
+    
     vaults = Vault.query.all()
-    return jsonify([vault.to_dict() for vault in vaults])
+    result = [vault.to_dict() for vault in vaults]
+    set_cache('vaults', result)
+    return jsonify(result)
 
 @app.route('/api/vaults', methods=['POST'])
 def create_vault():
@@ -313,6 +715,7 @@ def create_vault():
     )
     db.session.add(vault)
     db.session.commit()
+    clear_cache()
     return jsonify(vault.to_dict()), 201
 
 @app.route('/api/vaults/<int:vault_id>', methods=['PUT'])
@@ -326,6 +729,7 @@ def update_vault(vault_id):
     vault.current_balance = float(data.get('current_balance', vault.current_balance))
     
     db.session.commit()
+    clear_cache()
     return jsonify(vault.to_dict())
 
 @app.route('/api/vaults/<int:vault_id>', methods=['DELETE'])
@@ -333,12 +737,19 @@ def delete_vault(vault_id):
     vault = Vault.query.get_or_404(vault_id)
     db.session.delete(vault)
     db.session.commit()
+    clear_cache()
     return '', 204
 
 @app.route('/api/atms', methods=['GET'])
 def get_atms():
+    cached = get_cache('atms')
+    if cached:
+        return jsonify(cached)
+    
     atms = ATM.query.all()
-    return jsonify([atm.to_dict() for atm in atms])
+    result = [atm.to_dict() for atm in atms]
+    set_cache('atms', result)
+    return jsonify(result)
 
 @app.route('/api/atms', methods=['POST'])
 def create_atm():
@@ -352,6 +763,7 @@ def create_atm():
     )
     db.session.add(atm)
     db.session.commit()
+    clear_cache()
     return jsonify(atm.to_dict()), 201
 
 @app.route('/api/atms/<int:atm_id>', methods=['PUT'])
@@ -366,6 +778,7 @@ def update_atm(atm_id):
     atm.daily_avg_demand = float(data.get('daily_avg_demand', atm.daily_avg_demand))
     
     db.session.commit()
+    clear_cache()
     return jsonify(atm.to_dict())
 
 @app.route('/api/atms/<int:atm_id>', methods=['DELETE'])
@@ -373,6 +786,7 @@ def delete_atm(atm_id):
     atm = ATM.query.get_or_404(atm_id)
     db.session.delete(atm)
     db.session.commit()
+    clear_cache()
     return '', 204
 
 @app.route('/api/optimize', methods=['POST'])
@@ -420,6 +834,7 @@ def execute_allocation():
                 atm.current_balance += allocation['amount']
         
         db.session.commit()
+        clear_cache()
         return jsonify({'message': 'Allocation executed successfully'})
         
     except Exception as e:
@@ -932,6 +1347,372 @@ def create_tables():
             db.session.commit()
 
 
+# ==================== VEHICLE MANAGEMENT APIs ====================
+
+@app.route('/api/vehicles', methods=['GET'])
+def get_vehicles():
+    """Get all vehicles"""
+    try:
+        vehicles = db.session.execute(text("SELECT * FROM vehicle")).fetchall()
+        return jsonify([{
+            'id': v[0],
+            'name': v[1],
+            'capacity': v[2],
+            'fuel_cost_per_km': v[3],
+            'assigned_vault_id': v[4],
+            'status': v[5],
+            'created_at': v[6]
+        } for v in vehicles])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/vehicles', methods=['POST'])
+def create_vehicle():
+    """Create new vehicle"""
+    try:
+        data = request.json
+        db.session.execute(text("""
+            INSERT INTO vehicle (name, capacity, fuel_cost_per_km, assigned_vault_id, status)
+            VALUES (:name, :capacity, :fuel_cost, :vault_id, :status)
+        """), {
+            'name': data['name'],
+            'capacity': data['capacity'],
+            'fuel_cost': data.get('fuel_cost_per_km', 2.0),
+            'vault_id': data.get('assigned_vault_id'),
+            'status': data.get('status', 'active')
+        })
+        db.session.commit()
+        return jsonify({'message': 'Vehicle created successfully'}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/vehicles/<int:vehicle_id>', methods=['PUT'])
+def update_vehicle(vehicle_id):
+    """Update vehicle"""
+    try:
+        data = request.json
+        db.session.execute(text("""
+            UPDATE vehicle
+            SET name = :name, capacity = :capacity, fuel_cost_per_km = :fuel_cost,
+                assigned_vault_id = :vault_id, status = :status
+            WHERE id = :id
+        """), {
+            'id': vehicle_id,
+            'name': data['name'],
+            'capacity': data['capacity'],
+            'fuel_cost': data.get('fuel_cost_per_km', 2.0),
+            'vault_id': data.get('assigned_vault_id'),
+            'status': data.get('status', 'active')
+        })
+        db.session.commit()
+        return jsonify({'message': 'Vehicle updated successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/vehicles/<int:vehicle_id>', methods=['DELETE'])
+def delete_vehicle(vehicle_id):
+    """Delete vehicle"""
+    try:
+        db.session.execute(text("DELETE FROM vehicle WHERE id = :id"), {'id': vehicle_id})
+        db.session.commit()
+        return jsonify({'message': 'Vehicle deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+# ==================== ROUTE PLANNING APIs ====================
+
+@app.route('/api/predictions/tomorrow', methods=['GET'])
+def get_tomorrow_predictions():
+    """Get demand predictions for tomorrow"""
+    try:
+        from services.prediction_service import get_prediction_service
+        
+        # Get all ATMs
+        atms = ATM.query.all()
+        atms_data = [atm.to_dict() for atm in atms]
+        
+        # Get predictions
+        prediction_service = get_prediction_service()
+        threshold = float(request.args.get('threshold', 0.5))
+        
+        atms_needing_refill = prediction_service.get_atms_needing_refill(
+            atms_data, 
+            threshold_percentage=threshold
+        )
+        
+        return jsonify({
+            'prediction_date': (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d'),
+            'total_atms': len(atms_data),
+            'atms_needing_refill': len(atms_needing_refill),
+            'threshold_percentage': threshold,
+            'atms': atms_needing_refill
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/routes/generate', methods=['POST'])
+def generate_routes():
+    """Generate optimized routes for vehicles"""
+    try:
+        from services.route_optimizer import get_route_optimizer
+        from services.prediction_service import get_prediction_service
+        
+        data = request.json
+        vault_id = data.get('vault_id')
+        vehicle_ids = data.get('vehicle_ids', [])
+        atm_ids = data.get('atm_ids', [])
+        use_predictions = data.get('use_predictions', True)
+        threshold = data.get('threshold', 0.5)
+        
+        # Get vault (depot)
+        vault = Vault.query.get(vault_id)
+        if not vault:
+            return jsonify({'error': 'Vault not found'}), 404
+        
+        vault_data = vault.to_dict()
+        vault_result = db.session.execute(text("""
+            SELECT latitude, longitude, address FROM vault WHERE id = :id
+        """), {'id': vault_id}).fetchone()
+        
+        if vault_result and vault_result[0]:
+            vault_data['latitude'] = vault_result[0]
+            vault_data['longitude'] = vault_result[1]
+            vault_data['address'] = vault_result[2]
+        else:
+            return jsonify({'error': 'Vault coordinates not found'}), 400
+        
+        # Get vehicles
+        vehicles = []
+        for v_id in vehicle_ids:
+            v = db.session.execute(text("""
+                SELECT id, name, capacity, fuel_cost_per_km FROM vehicle WHERE id = :id
+            """), {'id': v_id}).fetchone()
+            if v:
+                vehicles.append({
+                    'id': v[0],
+                    'name': v[1],
+                    'capacity': v[2],
+                    'fuel_cost_per_km': v[3]
+                })
+        
+        if not vehicles:
+            return jsonify({'error': 'No vehicles selected'}), 400
+        
+        # Get ATMs to visit
+        if use_predictions and not atm_ids:
+            # Use ML predictions to determine ATMs
+            prediction_service = get_prediction_service()
+            all_atms = ATM.query.all()
+            all_atms_data = [atm.to_dict() for atm in all_atms]
+            
+            # Add coordinates
+            for atm_data in all_atms_data:
+                atm_coords = db.session.execute(text("""
+                    SELECT latitude, longitude FROM atm WHERE id = :id
+                """), {'id': atm_data['id']}).fetchone()
+                if atm_coords:
+                    atm_data['latitude'] = atm_coords[0]
+                    atm_data['longitude'] = atm_coords[1]
+            
+            atms_to_visit = prediction_service.get_atms_needing_refill(
+                all_atms_data, 
+                threshold_percentage=threshold
+            )
+        else:
+            # Use manually selected ATMs
+            atms_to_visit = []
+            for atm_id in atm_ids:
+                atm = ATM.query.get(atm_id)
+                if atm:
+                    atm_data = atm.to_dict()
+                    atm_coords = db.session.execute(text("""
+                        SELECT latitude, longitude FROM atm WHERE id = :id
+                    """), {'id': atm_id}).fetchone()
+                    
+                    if atm_coords and atm_coords[0]:
+                        atm_data['latitude'] = atm_coords[0]
+                        atm_data['longitude'] = atm_coords[1]
+                        atm_data['required_amount'] = atm_data['capacity'] - atm_data['current_balance']
+                        atms_to_visit.append(atm_data)
+        
+        if not atms_to_visit:
+            return jsonify({
+                'status': 'success',
+                'message': 'No ATMs need refill',
+                'routes': []
+            })
+        
+        # Optimize routes
+        optimizer = get_route_optimizer()
+        result = optimizer.optimize_routes(
+            depot=vault_data,
+            atms_to_visit=atms_to_visit,
+            vehicles=vehicles,
+            time_limit_seconds=30
+        )
+        
+        # Save routes to database
+        if result.get('status') == 'success':
+            route_date = datetime.now().date()
+            for route_info in result['routes']:
+                # Insert route
+                route_result = db.session.execute(text("""
+                    INSERT INTO route (date, vehicle_id, total_distance, total_time, total_cost, status)
+                    VALUES (:date, :vehicle_id, :distance, :time, :cost, 'planned')
+                """), {
+                    'date': route_date,
+                    'vehicle_id': route_info['vehicle_id'],
+                    'distance': route_info['total_distance'],
+                    'time': route_info['estimated_time'],
+                    'cost': route_info['estimated_cost']
+                })
+                db.session.commit()
+                
+                # Get the inserted route ID
+                route_id = route_result.lastrowid
+                
+                # Insert route stops
+                for stop in route_info['stops']:
+                    db.session.execute(text("""
+                        INSERT INTO route_stop (route_id, atm_id, sequence, predicted_demand, actual_loaded)
+                        VALUES (:route_id, :atm_id, :sequence, :predicted_demand, :actual_loaded)
+                    """), {
+                        'route_id': route_id,
+                        'atm_id': stop['atm_id'],
+                        'sequence': stop['sequence'],
+                        'predicted_demand': stop.get('predicted_demand', 0),
+                        'actual_loaded': stop.get('required_amount', 0)
+                    })
+                db.session.commit()
+                
+                route_info['route_id'] = route_id
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        db.session.rollback()
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/routes', methods=['GET'])
+def get_routes():
+    """Get all routes"""
+    try:
+        routes = db.session.execute(text("""
+            SELECT r.*, v.name as vehicle_name 
+            FROM route r
+            LEFT JOIN vehicle v ON r.vehicle_id = v.id
+            ORDER BY r.date DESC, r.id DESC
+        """)).fetchall()
+        
+        routes_list = []
+        for r in routes:
+            # Get route stops
+            stops = db.session.execute(text("""
+                SELECT rs.*, a.name as atm_name, a.location
+                FROM route_stop rs
+                LEFT JOIN atm a ON rs.atm_id = a.id
+                WHERE rs.route_id = :route_id
+                ORDER BY rs.sequence
+            """), {'route_id': r[0]}).fetchall()
+            
+            routes_list.append({
+                'id': r[0],
+                'date': r[1],
+                'vehicle_id': r[2],
+                'vehicle_name': r[9] if len(r) > 9 else 'Unknown',
+                'total_distance': r[3],
+                'total_time': r[4],
+                'total_cost': r[5],
+                'status': r[6],
+                'created_at': r[7],
+                'executed_at': r[8],
+                'stops': [{
+                    'id': s[0],
+                    'atm_id': s[2],
+                    'atm_name': s[8] if len(s) > 8 else 'Unknown',
+                    'location': s[9] if len(s) > 9 else 'Unknown',
+                    'sequence': s[3],
+                    'predicted_demand': s[4],
+                    'actual_loaded': s[5]
+                } for s in stops]
+            })
+        
+        return jsonify(routes_list)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/routes/<int:route_id>', methods=['GET'])
+def get_route(route_id):
+    """Get route details"""
+    try:
+        route = db.session.execute(text("""
+            SELECT r.*, v.name as vehicle_name 
+            FROM route r
+            LEFT JOIN vehicle v ON r.vehicle_id = v.id
+            WHERE r.id = :id
+        """), {'id': route_id}).fetchone()
+        
+        if not route:
+            return jsonify({'error': 'Route not found'}), 404
+        
+        stops = db.session.execute(text("""
+            SELECT rs.*, a.name as atm_name, a.location, a.latitude, a.longitude
+            FROM route_stop rs
+            LEFT JOIN atm a ON rs.atm_id = a.id
+            WHERE rs.route_id = :route_id
+            ORDER BY rs.sequence
+        """), {'route_id': route_id}).fetchall()
+        
+        return jsonify({
+            'id': route[0],
+            'date': route[1],
+            'vehicle_id': route[2],
+            'vehicle_name': route[9] if len(route) > 9 else 'Unknown',
+            'total_distance': route[3],
+            'total_time': route[4],
+            'total_cost': route[5],
+            'status': route[6],
+            'created_at': route[7],
+            'executed_at': route[8],
+            'stops': [{
+                'id': s[0],
+                'atm_id': s[2],
+                'atm_name': s[8],
+                'location': s[9],
+                'latitude': s[10],
+                'longitude': s[11],
+                'sequence': s[3],
+                'predicted_demand': s[4],
+                'actual_loaded': s[5]
+            } for s in stops]
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/routes/<int:route_id>/execute', methods=['POST'])
+def execute_route(route_id):
+    """Mark route as executed"""
+    try:
+        db.session.execute(text("""
+            UPDATE route
+            SET status = 'executed', executed_at = :executed_at
+            WHERE id = :id
+        """), {
+            'id': route_id,
+            'executed_at': datetime.now()
+        })
+        db.session.commit()
+        return jsonify({'message': 'Route marked as executed'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     create_tables()   # Run DB setup when app starts
     
@@ -944,9 +1725,20 @@ if __name__ == '__main__':
     else:
         print("⚠ ML API not loaded - advanced forecasting features unavailable")
     
+    # Register AI Recommendations API routes if available
+    if AI_API_AVAILABLE:
+        try:
+            register_ai_routes(app)
+        except Exception as e:
+            print(f"⚠ Warning: Could not register AI Recommendations API routes: {e}")
+    else:
+        print("⚠ AI Recommendations API not loaded - advanced AI features unavailable")
+    
     print("\n🚀 Starting Smart ATM System Backend...")
     print("📍 Backend running on: http://127.0.0.1:5000")
     print("📊 ML API endpoints available at: /api/ml/*")
+    print("🤖 AI Recommendations API available at: /api/ai/*")
+    print("🚚 Vehicle Routing endpoints available at: /api/vehicles/* and /api/routes/*")
     print("\n")
     
     app.run(debug=True, port=5000)

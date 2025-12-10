@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
     BarChart,
     Bar,
@@ -24,11 +24,36 @@ import {
     Settings,
     Brain,
     Calendar,
+    Truck,
+    Map,
+    Route,
+    Sparkles,
+    Target,
+    Activity,
+    Zap,
+    Upload,
+    Download,
+    LogOut,
+    User,
+    Shield,
 } from "lucide-react";
+import VehicleManagement from "./VehicleManagement";
+import RoutePlanning from "./RoutePlanning";
+import RouteDashboard from "./RouteDashboard";
+import AccessControl from "./AccessControl";
+import AuthPage from "./AuthPage";
+
+console.log("Routing components loaded:", {
+    VehicleManagement: !!VehicleManagement,
+    RoutePlanning: !!RoutePlanning,
+    RouteDashboard: !!RouteDashboard,
+});
 
 const API_BASE = "http://localhost:5000/api";
 
 const SmartATMDashboard = () => {
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [currentUser, setCurrentUser] = useState(null);
     const [activeTab, setActiveTab] = useState("dashboard");
     const [vaults, setVaults] = useState([]);
     const [atms, setAtms] = useState([]);
@@ -43,8 +68,15 @@ const SmartATMDashboard = () => {
     const [selectedModel, setSelectedModel] = useState("ensemble");
     const [forecastDays, setForecastDays] = useState(7);
 
-    // Fetch data
-    const fetchData = async () => {
+    // AI Recommendations state
+    const [criticalATMs, setCriticalATMs] = useState([]);
+    const [aiLoading, setAILoading] = useState(false);
+    const [whatIfScenario, setWhatIfScenario] = useState(null);
+    const [selectedScenarioType, setSelectedScenarioType] =
+        useState("emergency");
+
+    // Fetch data - memoized to prevent recreation
+    const fetchData = useCallback(async () => {
         try {
             const [vaultsRes, atmsRes, transactionsRes, analyticsRes] =
                 await Promise.all([
@@ -73,14 +105,14 @@ const SmartATMDashboard = () => {
         } catch (error) {
             console.error("Failed to fetch data:", error);
         }
-    };
+    }, []);
 
     useEffect(() => {
         fetchData();
     }, []);
 
-    // Optimization
-    const runOptimization = async () => {
+    // Optimization - memoized
+    const runOptimization = useCallback(async () => {
         setLoading(true);
         try {
             const response = await fetch(`${API_BASE}/optimize`, {
@@ -94,10 +126,10 @@ const SmartATMDashboard = () => {
             console.error("Optimization failed:", error);
         }
         setLoading(false);
-    };
+    }, [selectedAlgorithm]);
 
-    // Execute allocation
-    const executeAllocation = async () => {
+    // Execute allocation - memoized
+    const executeAllocation = useCallback(async () => {
         if (!optimizationResult?.allocations) return;
 
         setLoading(true);
@@ -122,10 +154,10 @@ const SmartATMDashboard = () => {
             alert("Failed to execute allocation");
         }
         setLoading(false);
-    };
+    }, [optimizationResult, fetchData]);
 
-    // ML Forecasting functions
-    const fetchMLForecast = async () => {
+    // ML Forecasting functions - memoized
+    const fetchMLForecast = useCallback(async () => {
         setLoading(true);
         try {
             const response = await fetch(
@@ -154,9 +186,9 @@ const SmartATMDashboard = () => {
             );
         }
         setLoading(false);
-    };
+    }, [selectedATMForForecast, forecastDays, selectedModel]);
 
-    const fetchMLMetrics = async () => {
+    const fetchMLMetrics = useCallback(async () => {
         try {
             const response = await fetch(
                 `${API_BASE}/ml/models/metrics/${selectedATMForForecast}`
@@ -168,16 +200,16 @@ const SmartATMDashboard = () => {
         } catch (error) {
             console.error("Failed to fetch ML metrics:", error);
         }
-    };
+    }, [selectedATMForForecast]);
 
     useEffect(() => {
         if (activeTab === "ml-forecast") {
             fetchMLMetrics();
         }
-    }, [activeTab, selectedATMForForecast]);
+    }, [activeTab, selectedATMForForecast, fetchMLMetrics]);
 
-    // CRUD Operations
-    const addVault = async (vaultData) => {
+    // CRUD Operations - memoized
+    const addVault = useCallback(async (vaultData) => {
         try {
             const response = await fetch(`${API_BASE}/vaults`, {
                 method: "POST",
@@ -192,9 +224,44 @@ const SmartATMDashboard = () => {
             console.error("Failed to add vault:", error);
         }
         return false;
-    };
+    }, [fetchData]);
 
-    const addATM = async (atmData) => {
+    const updateVault = useCallback(async (vaultId, vaultData) => {
+        try {
+            const response = await fetch(`${API_BASE}/vaults/${vaultId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(vaultData),
+            });
+            if (response.ok) {
+                fetchData();
+                return true;
+            }
+        } catch (error) {
+            console.error("Failed to update vault:", error);
+        }
+        return false;
+    }, [fetchData]);
+
+    const deleteVault = useCallback(async (vaultId) => {
+        if (!window.confirm("Are you sure you want to delete this vault?")) {
+            return;
+        }
+        try {
+            const response = await fetch(`${API_BASE}/vaults/${vaultId}`, {
+                method: "DELETE",
+            });
+            if (response.ok) {
+                fetchData();
+                return true;
+            }
+        } catch (error) {
+            console.error("Failed to delete vault:", error);
+        }
+        return false;
+    }, [fetchData]);
+
+    const addATM = useCallback(async (atmData) => {
         try {
             const response = await fetch(`${API_BASE}/atms`, {
                 method: "POST",
@@ -209,59 +276,198 @@ const SmartATMDashboard = () => {
             console.error("Failed to add ATM:", error);
         }
         return false;
+    }, [fetchData]);
+
+    const updateATM = useCallback(async (atmId, atmData) => {
+        try {
+            const response = await fetch(`${API_BASE}/atms/${atmId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(atmData),
+            });
+            if (response.ok) {
+                fetchData();
+                return true;
+            }
+        } catch (error) {
+            console.error("Failed to update ATM:", error);
+        }
+        return false;
+    }, [fetchData]);
+
+    const deleteATM = useCallback(async (atmId) => {
+        if (!window.confirm("Are you sure you want to delete this ATM?")) {
+            return;
+        }
+        try {
+            const response = await fetch(`${API_BASE}/atms/${atmId}`, {
+                method: "DELETE",
+            });
+            if (response.ok) {
+                fetchData();
+                return true;
+            }
+        } catch (error) {
+            console.error("Failed to delete ATM:", error);
+        }
+        return false;
+    }, [fetchData]);
+
+    // Check authentication on mount
+    useEffect(() => {
+        const token = localStorage.getItem('token');
+        const user = localStorage.getItem('user');
+        
+        if (token && user) {
+            setIsAuthenticated(true);
+            setCurrentUser(JSON.parse(user));
+        }
+    }, []);
+
+    // Helper function to get auth headers
+    const getAuthHeaders = () => {
+        const token = localStorage.getItem('token');
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': token ? `Bearer ${token}` : ''
+        };
+    };
+
+    // Handle login
+    const handleLogin = (token, user) => {
+        localStorage.setItem('token', token);
+        localStorage.setItem('user', JSON.stringify(user));
+        setIsAuthenticated(true);
+        setCurrentUser(user);
+    };
+
+    // Handle logout
+    const handleLogout = () => {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        setIsAuthenticated(false);
+        setCurrentUser(null);
+        setActiveTab('dashboard');
     };
 
     // Components
     const Dashboard = () => {
-        if (!analytics) return <div className="p-8">Loading...</div>;
+        const [animateVaults, setAnimateVaults] = useState(false);
 
-        const utilizationData = analytics.atm_utilization.map((atm) => ({
-            name: atm.name,
-            utilization: atm.utilization,
-            shortage: Math.max(0, atm.daily_demand - atm.current_balance),
-        }));
+        useEffect(() => {
+            // Trigger vault animation after component mounts
+            const timer = setTimeout(() => setAnimateVaults(true), 100);
+            return () => clearTimeout(timer);
+        }, []);
+
+        // Memoize expensive computations (must be before any early returns)
+        const utilizationData = useMemo(() => 
+            analytics?.atm_utilization?.map((atm) => ({
+                name: atm.name.replace("ATM ", ""),
+                utilization: atm.utilization,
+                balance: atm.current_balance / 1000,
+                capacity: atm.capacity / 1000,
+            })) || [], [analytics]
+        );
+
+        // ATM Status Distribution - memoized
+        const atmStatusData = useMemo(() => 
+            analytics?.atm_utilization?.reduce(
+                (acc, atm) => {
+                    const utilizationPct =
+                        (atm.current_balance / atm.capacity) * 100;
+                    if (utilizationPct < 20) acc.critical++;
+                    else if (utilizationPct < 50) acc.warning++;
+                    else acc.healthy++;
+                    return acc;
+                },
+                { healthy: 0, warning: 0, critical: 0 }
+            ) || { healthy: 0, warning: 0, critical: 0 }, [analytics]
+        );
+
+        const statusPieData = useMemo(() => [
+            {
+                name: "Healthy (>50%)",
+                value: atmStatusData.healthy,
+                color: "#10B981",
+            },
+            {
+                name: "Warning (20-50%)",
+                value: atmStatusData.warning,
+                color: "#F59E0B",
+            },
+            {
+                name: "Critical (<20%)",
+                value: atmStatusData.critical,
+                color: "#EF4444",
+            },
+        ], [atmStatusData]);
+
+        // Vault Balance Distribution - memoized
+        const vaultBalanceData = useMemo(() => 
+            vaults.map((vault) => ({
+                name: vault.name
+                    .replace("Vault - ", "")
+                    .replace("Main Vault - ", ""),
+                balance: vault.current_balance / 1000000,
+                capacity: vault.capacity / 1000000,
+                utilization: (vault.current_balance / vault.capacity) * 100,
+            })), [vaults]
+        );
+
+        // All ATMs by utilization - memoized
+        const allAtmsByUtilization = useMemo(() => 
+            analytics?.atm_utilization ? [...analytics.atm_utilization]
+                .sort((a, b) => b.utilization - a.utilization)
+                .map((atm) => ({
+                    name: atm.name.replace("ATM ", ""),
+                    utilization: atm.utilization,
+                })) : [], [analytics]
+        );
 
         const COLORS = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6"];
+
+        if (!analytics) return <div className="p-8">Loading...</div>;
 
         return (
             <div className="p-6 space-y-6">
                 {/* Summary Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                    <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-blue-500">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div className="bg-gradient-to-br from-blue-500 to-blue-600 p-6 rounded-lg shadow-lg text-white">
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-sm font-medium text-gray-600">
+                                <p className="text-sm font-medium opacity-90">
                                     Total Vaults
                                 </p>
-                                <p className="text-2xl font-bold text-gray-900">
+                                <p className="text-3xl font-bold mt-1">
                                     {analytics.summary.total_vaults}
                                 </p>
                             </div>
-                            <Building className="h-8 w-8 text-blue-500" />
+                            <Building className="h-10 w-10 opacity-80" />
                         </div>
                     </div>
 
-                    <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-green-500">
+                    <div className="bg-gradient-to-br from-green-500 to-green-600 p-6 rounded-lg shadow-lg text-white">
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-sm font-medium text-gray-600">
+                                <p className="text-sm font-medium opacity-90">
                                     Total ATMs
                                 </p>
-                                <p className="text-2xl font-bold text-gray-900">
+                                <p className="text-3xl font-bold mt-1">
                                     {analytics.summary.total_atms}
                                 </p>
                             </div>
-                            <Database className="h-8 w-8 text-green-500" />
+                            <Database className="h-10 w-10 opacity-80" />
                         </div>
                     </div>
 
-                    <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-yellow-500">
+                    <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 p-6 rounded-lg shadow-lg text-white">
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-sm font-medium text-gray-600">
+                                <p className="text-sm font-medium opacity-90">
                                     Vault Balance
                                 </p>
-                                <p className="text-2xl font-bold text-gray-900">
+                                <p className="text-3xl font-bold mt-1">
                                     $
                                     {(
                                         analytics.summary.total_vault_balance /
@@ -270,17 +476,17 @@ const SmartATMDashboard = () => {
                                     M
                                 </p>
                             </div>
-                            <Banknote className="h-8 w-8 text-yellow-500" />
+                            <Banknote className="h-10 w-10 opacity-80" />
                         </div>
                     </div>
 
-                    <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-purple-500">
+                    <div className="bg-gradient-to-br from-purple-500 to-purple-600 p-6 rounded-lg shadow-lg text-white">
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-sm font-medium text-gray-600">
+                                <p className="text-sm font-medium opacity-90">
                                     ATM Balance
                                 </p>
-                                <p className="text-2xl font-bold text-gray-900">
+                                <p className="text-3xl font-bold mt-1">
                                     $
                                     {(
                                         analytics.summary.total_atm_balance /
@@ -289,71 +495,221 @@ const SmartATMDashboard = () => {
                                     K
                                 </p>
                             </div>
-                            <TrendingUp className="h-8 w-8 text-purple-500" />
+                            <TrendingUp className="h-10 w-10 opacity-80" />
+                        </div>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 p-6 rounded-lg shadow-lg text-white">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-sm font-medium opacity-90">
+                                    Avg Utilization
+                                </p>
+                                <p className="text-3xl font-bold mt-1">
+                                    {(
+                                        analytics.atm_utilization.reduce(
+                                            (sum, atm) => sum + atm.utilization,
+                                            0
+                                        ) / analytics.atm_utilization.length
+                                    ).toFixed(1)}
+                                    %
+                                </p>
+                            </div>
+                            <Activity className="h-10 w-10 opacity-80" />
                         </div>
                     </div>
                 </div>
 
-                {/* Charts */}
+                {/* Charts Row 1 */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* ATM Status Distribution Pie Chart */}
                     <div className="bg-white p-6 rounded-lg shadow-md">
-                        <h3 className="text-lg font-semibold mb-4">
-                            ATM Utilization & Shortages
+                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <Activity className="h-5 w-5 text-blue-600" />
+                            ATM Health Status Distribution
+                        </h3>
+                        <div className="flex justify-center">
+                            <PieChart width={400} height={320}>
+                                <Pie
+                                    data={statusPieData}
+                                    cx={200}
+                                    cy={140}
+                                    labelLine={true}
+                                    label={({ value, percent }) =>
+                                        `${value} (${(percent * 100).toFixed(
+                                            0
+                                        )}%)`
+                                    }
+                                    outerRadius={80}
+                                    fill="#8884d8"
+                                    dataKey="value"
+                                >
+                                    {statusPieData.map((entry, index) => (
+                                        <Cell
+                                            key={`cell-${index}`}
+                                            fill={entry.color}
+                                        />
+                                    ))}
+                                </Pie>
+                                <Tooltip />
+                                <Legend
+                                    verticalAlign="bottom"
+                                    height={36}
+                                    formatter={(value, entry) =>
+                                        entry.payload.name
+                                    }
+                                />
+                            </PieChart>
+                        </div>
+                    </div>
+
+                    {/* Vault Balance Distribution */}
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <Building className="h-5 w-5 text-blue-600" />
+                            Vault Balance Distribution
+                        </h3>
+                        <div
+                            className="flex justify-evenly pt-8 pb-4"
+                            style={{ minHeight: "360px" }}
+                        >
+                            {vaultBalanceData.map((vault, index) => (
+                                <div
+                                    key={index}
+                                    className="flex flex-col items-center"
+                                    style={{ width: "110px" }}
+                                >
+                                    <div className="text-sm font-bold text-gray-800 mb-1">
+                                        {vault.utilization.toFixed(1)}%
+                                    </div>
+                                    <div className="text-xs font-medium text-gray-700 mb-3">
+                                        ${vault.balance.toFixed(1)}M
+                                    </div>
+                                    <div
+                                        className="relative"
+                                        style={{
+                                            width: "64px",
+                                            height: "160px",
+                                        }}
+                                    >
+                                        <div
+                                            className="absolute bottom-0 w-full bg-gray-200 rounded-t-lg"
+                                            style={{ height: "160px" }}
+                                        ></div>
+                                        <div
+                                            className="absolute bottom-0 bg-gradient-to-t from-blue-600 to-blue-400 w-full rounded-t-lg transition-all duration-1000 ease-out"
+                                            style={{
+                                                height: animateVaults
+                                                    ? `${
+                                                          Math.min(
+                                                              vault.utilization,
+                                                              100
+                                                          ) * 1.6
+                                                      }px`
+                                                    : "0px",
+                                                transitionDelay: `${
+                                                    index * 150
+                                                }ms`,
+                                            }}
+                                        ></div>
+                                    </div>
+                                    <div
+                                        className="text-sm font-semibold text-gray-800 mt-3 text-center leading-tight"
+                                        style={{
+                                            minHeight: "36px",
+                                            width: "110px",
+                                        }}
+                                    >
+                                        {vault.name}
+                                    </div>
+                                    <div className="text-xs text-gray-500 text-center mt-1">
+                                        / ${vault.capacity.toFixed(1)}M
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Charts Row 2 */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* ATM Utilization Comparison */}
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <TrendingUp className="h-5 w-5 text-purple-600" />
+                            All ATMs by Utilization
+                        </h3>
+                        <div
+                            className="overflow-y-auto"
+                            style={{ maxHeight: "280px" }}
+                        >
+                            <BarChart
+                                width={380}
+                                height={allAtmsByUtilization.length * 35}
+                                data={allAtmsByUtilization}
+                                layout="vertical"
+                            >
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis
+                                    type="number"
+                                    unit="%"
+                                    domain={[0, "dataMax + 10"]}
+                                />
+                                <YAxis
+                                    dataKey="name"
+                                    type="category"
+                                    width={140}
+                                />
+                                <Tooltip
+                                    formatter={(value) =>
+                                        `${value.toFixed(1)}%`
+                                    }
+                                />
+                                <Bar dataKey="utilization" fill="#8B5CF6" />
+                            </BarChart>
+                        </div>
+                    </div>
+
+                    {/* ATM Balance vs Capacity */}
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <Database className="h-5 w-5 text-blue-600" />
+                            ATM Balance vs Capacity
                         </h3>
                         <BarChart
-                            width={400}
-                            height={300}
-                            data={utilizationData}
+                            width={380}
+                            height={280}
+                            data={utilizationData.slice(0, 8)}
                         >
                             <CartesianGrid strokeDasharray="3 3" />
                             <XAxis
                                 dataKey="name"
-                                angle={-45}
+                                angle={-30}
                                 textAnchor="end"
-                                height={60}
+                                height={80}
                             />
-                            <YAxis />
-                            <Tooltip />
+                            <YAxis
+                                label={{
+                                    value: "Thousand $",
+                                    angle: -90,
+                                    position: "insideLeft",
+                                }}
+                            />
+                            <Tooltip
+                                formatter={(value) => `$${value.toFixed(0)}K`}
+                            />
                             <Legend />
                             <Bar
-                                dataKey="utilization"
+                                dataKey="balance"
                                 fill="#3B82F6"
-                                name="Utilization %"
+                                name="Current Balance"
                             />
                             <Bar
-                                dataKey="shortage"
-                                fill="#EF4444"
-                                name="Shortage ($)"
+                                dataKey="capacity"
+                                fill="#93C5FD"
+                                name="Capacity"
                             />
                         </BarChart>
-                    </div>
-
-                    <div className="bg-white p-6 rounded-lg shadow-md">
-                        <h3 className="text-lg font-semibold mb-4">
-                            Recent Transactions
-                        </h3>
-                        <div className="space-y-3 max-h-72 overflow-y-auto">
-                            {analytics.recent_transactions.map((tx, idx) => (
-                                <div
-                                    key={idx}
-                                    className="flex justify-between items-center p-3 bg-gray-50 rounded"
-                                >
-                                    <div>
-                                        <p className="font-medium">
-                                            {tx.vault_name} → {tx.atm_name}
-                                        </p>
-                                        <p className="text-sm text-gray-600">
-                                            {new Date(
-                                                tx.timestamp
-                                            ).toLocaleString()}
-                                        </p>
-                                    </div>
-                                    <span className="font-bold text-green-600">
-                                        ${tx.amount.toLocaleString()}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
                     </div>
                 </div>
             </div>
@@ -468,6 +824,7 @@ const SmartATMDashboard = () => {
 
     const VaultManagement = () => {
         const [showForm, setShowForm] = useState(false);
+        const [editingVault, setEditingVault] = useState(null);
         const [formData, setFormData] = useState({
             name: "",
             location: "",
@@ -475,11 +832,25 @@ const SmartATMDashboard = () => {
             current_balance: "",
         });
 
+        const handleEdit = (vault) => {
+            setEditingVault(vault);
+            setFormData({
+                name: vault.name,
+                location: vault.location,
+                capacity: vault.capacity,
+                current_balance: vault.current_balance,
+            });
+            setShowForm(true);
+        };
+
         const handleSubmit = async (e) => {
             e.preventDefault();
-            const success = await addVault(formData);
+            const success = editingVault
+                ? await updateVault(editingVault.id, formData)
+                : await addVault(formData);
             if (success) {
                 setShowForm(false);
+                setEditingVault(null);
                 setFormData({
                     name: "",
                     location: "",
@@ -489,12 +860,25 @@ const SmartATMDashboard = () => {
             }
         };
 
+        const handleCancel = () => {
+            setShowForm(false);
+            setEditingVault(null);
+            setFormData({
+                name: "",
+                location: "",
+                capacity: "",
+                current_balance: "",
+            });
+        };
+
         return (
             <div className="p-6 space-y-6">
                 <div className="flex justify-between items-center">
                     <h3 className="text-lg font-semibold">Vault Management</h3>
                     <button
-                        onClick={() => setShowForm(!showForm)}
+                        onClick={() =>
+                            showForm ? handleCancel() : setShowForm(true)
+                        }
                         className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md"
                     >
                         {showForm ? "Cancel" : "Add Vault"}
@@ -561,7 +945,7 @@ const SmartATMDashboard = () => {
                                 type="submit"
                                 className="col-span-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md"
                             >
-                                Add Vault
+                                {editingVault ? "Update Vault" : "Add Vault"}
                             </button>
                         </form>
                     </div>
@@ -585,6 +969,9 @@ const SmartATMDashboard = () => {
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                                     Utilization
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    Actions
                                 </th>
                             </tr>
                         </thead>
@@ -628,6 +1015,22 @@ const SmartATMDashboard = () => {
                                                 %
                                             </span>
                                         </div>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                        <button
+                                            onClick={() => handleEdit(vault)}
+                                            className="text-blue-600 hover:text-blue-900 font-medium mr-4"
+                                        >
+                                            Edit
+                                        </button>
+                                        <button
+                                            onClick={() =>
+                                                deleteVault(vault.id)
+                                            }
+                                            className="text-red-600 hover:text-red-900 font-medium"
+                                        >
+                                            Delete
+                                        </button>
                                     </td>
                                 </tr>
                             ))}
@@ -730,78 +1133,150 @@ const SmartATMDashboard = () => {
                 </button>
             </div>
 
-            {/* Model Performance Metrics */}
-            {mlMetrics && (
+            {/* Model Performance Metrics Table */}
+            {mlMetrics && mlMetrics.metrics && mlMetrics.metrics.length > 0 && (
                 <div className="bg-white p-6 rounded-lg shadow-md">
-                    <h3 className="text-lg font-semibold mb-4">
-                        Model Performance Metrics (ATM {selectedATMForForecast})
-                    </h3>
-                    <p className="text-sm text-gray-600 mb-4">
-                        Best Model:{" "}
-                        <span className="font-bold text-purple-600">
-                            {mlMetrics.best_model}
-                        </span>{" "}
-                        (MAPE: {mlMetrics.best_mape?.toFixed(2)}%)
-                    </p>
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-semibold">
+                            Model Performance Metrics - ATM{" "}
+                            {selectedATMForForecast}
+                        </h3>
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-600">
+                                Best Model:
+                            </span>
+                            <span className="font-bold text-purple-600 bg-purple-50 px-3 py-1 rounded-full text-sm">
+                                {mlMetrics.best_model} (MAPE:{" "}
+                                {mlMetrics.best_mape}%)
+                            </span>
+                        </div>
+                    </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        {Object.entries(mlMetrics.metrics || {}).map(
-                            ([modelName, metrics]) => (
-                                <div
-                                    key={modelName}
-                                    className={`p-4 rounded-lg border-2 ${
-                                        modelName === mlMetrics.best_model
-                                            ? "border-purple-500 bg-purple-50"
-                                            : "border-gray-200 bg-gray-50"
-                                    }`}
-                                >
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h4 className="font-bold text-gray-900">
-                                            {modelName.toUpperCase()}
-                                        </h4>
-                                        {modelName === mlMetrics.best_model && (
-                                            <span className="text-xs bg-purple-600 text-white px-2 py-1 rounded">
-                                                BEST
+                    {/* Metrics Table */}
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Model
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        MAE
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        RMSE
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        MAPE
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Training Days
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Status
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {mlMetrics.metrics.map((metric) => (
+                                    <tr
+                                        key={metric.model}
+                                        className={
+                                            metric.is_best
+                                                ? "bg-purple-50"
+                                                : "hover:bg-gray-50"
+                                        }
+                                    >
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="flex items-center">
+                                                <span className="text-sm font-medium text-gray-900">
+                                                    {metric.model}
+                                                </span>
+                                                {metric.is_best && (
+                                                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                                                        ⭐ Best
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="text-sm text-gray-900">
+                                                {metric.mae_formatted}
+                                            </div>
+                                            <div className="text-xs text-gray-500">
+                                                Mean Absolute Error
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="text-sm text-gray-900">
+                                                {metric.rmse_formatted}
+                                            </div>
+                                            <div className="text-xs text-gray-500">
+                                                Root Mean Squared Error
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="flex items-center">
+                                                <span
+                                                    className={`text-sm font-semibold ${
+                                                        metric.mape < 10
+                                                            ? "text-green-600"
+                                                            : metric.mape < 20
+                                                            ? "text-blue-600"
+                                                            : metric.mape < 50
+                                                            ? "text-yellow-600"
+                                                            : "text-red-600"
+                                                    }`}
+                                                >
+                                                    {metric.mape_formatted}
+                                                </span>
+                                            </div>
+                                            <div className="text-xs text-gray-500">
+                                                {metric.mape < 10
+                                                    ? "Excellent"
+                                                    : metric.mape < 20
+                                                    ? "Good"
+                                                    : metric.mape < 50
+                                                    ? "Acceptable"
+                                                    : "Needs Improvement"}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                            {metric.training_days} days
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                ✓ Trained
                                             </span>
-                                        )}
-                                    </div>
-                                    <div className="space-y-1 text-sm">
-                                        <div className="flex justify-between">
-                                            <span className="text-gray-600">
-                                                MAE:
-                                            </span>
-                                            <span className="font-medium">
-                                                {metrics.MAE}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-gray-600">
-                                                RMSE:
-                                            </span>
-                                            <span className="font-medium">
-                                                {metrics.RMSE}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-gray-600">
-                                                MAPE:
-                                            </span>
-                                            <span className="font-bold text-purple-600">
-                                                {metrics.MAPE}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-gray-600">
-                                                R²:
-                                            </span>
-                                            <span className="font-medium">
-                                                {metrics.R2}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                            )
-                        )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Legend */}
+                    <div className="mt-4 p-3 bg-gray-50 rounded-md">
+                        <p className="text-xs text-gray-600 mb-2 font-semibold">
+                            Understanding the Metrics:
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs text-gray-600">
+                            <div>
+                                <span className="font-medium">MAE:</span>{" "}
+                                Average prediction error in dollars (lower is
+                                better)
+                            </div>
+                            <div>
+                                <span className="font-medium">RMSE:</span>{" "}
+                                Penalizes large errors more heavily (lower is
+                                better)
+                            </div>
+                            <div>
+                                <span className="font-medium">MAPE:</span>{" "}
+                                Percentage error - &lt;10% Excellent, 10-20%
+                                Good, 20-50% Acceptable
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
@@ -1055,6 +1530,753 @@ const SmartATMDashboard = () => {
             )}
         </div>
     );
+
+    // AI Recommendations Tab Component
+    const AIRecommendationsTab = () => {
+        // Fetch critical ATMs with ML forecasts
+        const fetchCriticalATMs = async () => {
+            setAILoading(true);
+            try {
+                // First, get ML forecasts for all ATMs
+                const forecastPromises = atms.map(async (atm) => {
+                    try {
+                        const response = await fetch(
+                            `${API_BASE}/ml/forecast/${atm.id}?model=ensemble&days=7`
+                        );
+                        const data = await response.json();
+                        if (data.success) {
+                            return {
+                                atmId: atm.id,
+                                predictions: data.forecast.map(
+                                    (f) => f.predicted_demand
+                                ),
+                            };
+                        }
+                    } catch (error) {
+                        console.error(
+                            `Error fetching forecast for ATM ${atm.id}:`,
+                            error
+                        );
+                    }
+                    return null;
+                });
+
+                const forecasts = await Promise.all(forecastPromises);
+                const mlForecasts = {};
+                forecasts.forEach((f) => {
+                    if (f) mlForecasts[f.atmId] = f.predictions;
+                });
+
+                // Get critical ATMs recommendations
+                const response = await fetch(
+                    `${API_BASE}/ai/recommendations/critical-atms`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            atms: atms.map((atm) => ({
+                                id: atm.id,
+                                name: atm.name,
+                                location: atm.location,
+                                capacity: atm.capacity,
+                                current_balance: atm.current_balance,
+                                days_since_last_refill:
+                                    Math.floor(Math.random() * 10) + 1, // Mock data
+                            })),
+                            ml_forecasts: mlForecasts,
+                            threshold: 1.5,
+                        }),
+                    }
+                );
+
+                const data = await response.json();
+                if (data.success) {
+                    setCriticalATMs(data.critical_atms);
+                }
+            } catch (error) {
+                console.error("Error fetching critical ATMs:", error);
+                alert("Failed to fetch AI recommendations");
+            } finally {
+                setAILoading(false);
+            }
+        };
+
+        // Simulate What-If Scenario
+        const simulateScenario = async (scenarioType) => {
+            setAILoading(true);
+            try {
+                let endpoint = "";
+                let requestBody = {};
+
+                if (scenarioType === "emergency") {
+                    // Emergency rerouting simulation
+                    endpoint = `${API_BASE}/ai/whatif/emergency-rerouting`;
+                    requestBody = {
+                        current_route: {
+                            route: atms.slice(0, 5).map((atm) => ({
+                                atm_id: atm.id,
+                                location: [40.7128, -74.006], // Mock location
+                            })),
+                            total_distance: 25.5,
+                            total_time: 2.5,
+                            fuel_cost: 15.0,
+                        },
+                        emergency_atm_id: atms[6]?.id || 6,
+                        atm_location: [40.7589, -73.9851],
+                        vehicle_location: [40.7128, -74.006],
+                    };
+                } else if (scenarioType === "breakdown") {
+                    // Vehicle breakdown simulation
+                    endpoint = `${API_BASE}/ai/whatif/vehicle-breakdown`;
+                    requestBody = {
+                        current_route: {
+                            route: atms
+                                .slice(0, 5)
+                                .map((atm) => ({ atm_id: atm.id })),
+                            total_distance: 25.5,
+                            total_time: 2.5,
+                            fuel_cost: 15.0,
+                            total_cash_needed: 100000,
+                            start_location: [40.7128, -74.006],
+                        },
+                        available_vehicles: [
+                            {
+                                id: 1,
+                                name: "Vehicle 1",
+                                status: "available",
+                                capacity: 150000,
+                                fuel_efficiency: 12,
+                                current_location: [40.7128, -74.006],
+                            },
+                            {
+                                id: 2,
+                                name: "Vehicle 2",
+                                status: "available",
+                                capacity: 120000,
+                                fuel_efficiency: 10,
+                                current_location: [40.7589, -73.9851],
+                            },
+                            {
+                                id: 3,
+                                name: "Vehicle 3",
+                                status: "available",
+                                capacity: 180000,
+                                fuel_efficiency: 15,
+                                current_location: [40.7614, -73.9776],
+                            },
+                        ],
+                        broken_vehicle_id: 1,
+                    };
+                } else if (scenarioType === "cost") {
+                    // Cost comparison
+                    endpoint = `${API_BASE}/ai/whatif/cost-comparison`;
+                    requestBody = {
+                        current_route: {
+                            total_distance: 25.5,
+                            total_time: 2.5,
+                            fuel_cost: 15.0,
+                            route: atms.slice(0, 5),
+                        },
+                        alternative_route: {
+                            total_distance: 22.0,
+                            total_time: 2.2,
+                            fuel_cost: 13.0,
+                            route: atms.slice(1, 6),
+                        },
+                    };
+                }
+
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(requestBody),
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    setWhatIfScenario(data.analysis || data.comparison);
+                }
+            } catch (error) {
+                console.error("Error simulating scenario:", error);
+                alert("Failed to simulate scenario");
+            } finally {
+                setAILoading(false);
+            }
+        };
+
+        // Removed automatic fetching - user must click "Analyze" button
+
+        return (
+            <div className="p-6 space-y-6">
+                {/* Header */}
+                <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-6 rounded-lg shadow-lg">
+                    <div className="flex items-center gap-3 mb-2">
+                        <Sparkles className="h-8 w-8" />
+                        <h2 className="text-2xl font-bold">
+                            AI-Powered Smart Recommendations
+                        </h2>
+                    </div>
+                    <p className="text-purple-100">
+                        Intelligent route recommendations, what-if analysis, and
+                        optimization metrics
+                    </p>
+                </div>
+
+                {/* Critical ATMs Section */}
+                <div className="bg-white p-6 rounded-lg shadow-md">
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                            <Target className="h-6 w-6 text-red-600" />
+                            <h3 className="text-lg font-semibold">
+                                Critical ATMs Requiring Attention
+                            </h3>
+                        </div>
+                        <button
+                            onClick={fetchCriticalATMs}
+                            disabled={aiLoading || atms.length === 0}
+                            className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-gray-400 flex items-center gap-2"
+                        >
+                            {aiLoading ? (
+                                <>
+                                    <Activity className="h-4 w-4 animate-spin" />
+                                    Analyzing...
+                                </>
+                            ) : (
+                                <>
+                                    <Zap className="h-4 w-4" />
+                                    Analyze
+                                </>
+                            )}
+                        </button>
+                    </div>
+
+                    {criticalATMs.length === 0 ? (
+                        <div className="text-center py-8 text-gray-500">
+                            <Target className="h-12 w-12 mx-auto mb-2 text-gray-400" />
+                            <p>
+                                Click "Analyze" button to identify critical ATMs
+                                requiring attention.
+                            </p>
+                        </div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            Rank
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            ATM
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            Priority Score
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            Criticality
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            Balance
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            7-Day Demand
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            Recommended Refill
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {criticalATMs.map((atm, idx) => (
+                                        <tr
+                                            key={atm.atm_id}
+                                            className={
+                                                atm.criticality === "critical"
+                                                    ? "bg-red-50"
+                                                    : atm.criticality === "high"
+                                                    ? "bg-orange-50"
+                                                    : atm.criticality ===
+                                                      "medium"
+                                                    ? "bg-yellow-50"
+                                                    : ""
+                                            }
+                                        >
+                                            <td className="px-4 py-4 whitespace-nowrap">
+                                                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-purple-600 text-white font-bold">
+                                                    {idx + 1}
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-4 whitespace-nowrap">
+                                                <div className="text-sm font-medium text-gray-900">
+                                                    {atm.atm_name}
+                                                </div>
+                                                <div className="text-xs text-gray-500">
+                                                    {atm.location}
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-4 whitespace-nowrap">
+                                                <div className="text-lg font-bold text-purple-600">
+                                                    {atm.priority_score.toFixed(
+                                                        2
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-4 whitespace-nowrap">
+                                                <span
+                                                    className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                                        atm.criticality ===
+                                                        "critical"
+                                                            ? "bg-red-100 text-red-800"
+                                                            : atm.criticality ===
+                                                              "high"
+                                                            ? "bg-orange-100 text-orange-800"
+                                                            : atm.criticality ===
+                                                              "medium"
+                                                            ? "bg-yellow-100 text-yellow-800"
+                                                            : "bg-green-100 text-green-800"
+                                                    }`}
+                                                >
+                                                    {atm.criticality.toUpperCase()}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-4 whitespace-nowrap">
+                                                <div className="text-sm font-medium text-gray-900">
+                                                    $
+                                                    {atm.current_balance.toLocaleString()}
+                                                </div>
+                                                <div className="text-xs text-gray-500">
+                                                    {atm.balance_percentage}%
+                                                    capacity
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-4 whitespace-nowrap">
+                                                <div className="text-sm font-bold text-indigo-600">
+                                                    $
+                                                    {atm.predicted_7day_demand.toLocaleString()}
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-4">
+                                                <div className="text-sm">
+                                                    <div className="font-medium text-gray-900">
+                                                        Every{" "}
+                                                        {
+                                                            atm
+                                                                .refill_recommendation
+                                                                .recommended_days
+                                                        }{" "}
+                                                        days
+                                                    </div>
+                                                    <div className="text-xs text-gray-500">
+                                                        {
+                                                            atm
+                                                                .refill_recommendation
+                                                                .reason
+                                                        }
+                                                    </div>
+                                                    <div className="text-xs text-purple-600 mt-1">
+                                                        Confidence:{" "}
+                                                        {
+                                                            atm
+                                                                .refill_recommendation
+                                                                .confidence
+                                                        }
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+
+                {/* What-If Analysis Section */}
+                <div className="bg-white p-6 rounded-lg shadow-md">
+                    <div className="flex items-center gap-2 mb-4">
+                        <AlertTriangle className="h-6 w-6 text-amber-600" />
+                        <h3 className="text-lg font-semibold">
+                            What-If Scenario Analysis
+                        </h3>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <button
+                            onClick={() => {
+                                setSelectedScenarioType("emergency");
+                                simulateScenario("emergency");
+                            }}
+                            disabled={aiLoading}
+                            className="p-4 border-2 border-red-200 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                        >
+                            <AlertTriangle className="h-8 w-8 text-red-600 mx-auto mb-2" />
+                            <div className="font-semibold text-gray-900">
+                                Emergency Rerouting
+                            </div>
+                            <div className="text-sm text-gray-600">
+                                ATM runs out of cash
+                            </div>
+                        </button>
+
+                        <button
+                            onClick={() => {
+                                setSelectedScenarioType("breakdown");
+                                simulateScenario("breakdown");
+                            }}
+                            disabled={aiLoading}
+                            className="p-4 border-2 border-orange-200 rounded-lg hover:bg-orange-50 transition-colors disabled:opacity-50"
+                        >
+                            <Truck className="h-8 w-8 text-orange-600 mx-auto mb-2" />
+                            <div className="font-semibold text-gray-900">
+                                Vehicle Breakdown
+                            </div>
+                            <div className="text-sm text-gray-600">
+                                Find alternative vehicle
+                            </div>
+                        </button>
+
+                        <button
+                            onClick={() => {
+                                setSelectedScenarioType("cost");
+                                simulateScenario("cost");
+                            }}
+                            disabled={aiLoading}
+                            className="p-4 border-2 border-blue-200 rounded-lg hover:bg-blue-50 transition-colors disabled:opacity-50"
+                        >
+                            <TrendingUp className="h-8 w-8 text-blue-600 mx-auto mb-2" />
+                            <div className="font-semibold text-gray-900">
+                                Cost Comparison
+                            </div>
+                            <div className="text-sm text-gray-600">
+                                Compare route efficiency
+                            </div>
+                        </button>
+                    </div>
+
+                    {/* Scenario Results */}
+                    {whatIfScenario && (
+                        <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200">
+                            <h4 className="font-semibold text-lg mb-3 flex items-center gap-2">
+                                <Zap className="h-5 w-5 text-purple-600" />
+                                Scenario Analysis Results
+                            </h4>
+
+                            {selectedScenarioType === "emergency" &&
+                                whatIfScenario.scenario ===
+                                    "emergency_rerouting" && (
+                                    <div className="space-y-2">
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                            <div className="bg-white p-3 rounded">
+                                                <div className="text-xs text-gray-600">
+                                                    Emergency ATM
+                                                </div>
+                                                <div className="text-lg font-bold text-red-600">
+                                                    ATM #
+                                                    {
+                                                        whatIfScenario.emergency_atm_id
+                                                    }
+                                                </div>
+                                            </div>
+                                            <div className="bg-white p-3 rounded">
+                                                <div className="text-xs text-gray-600">
+                                                    Distance
+                                                </div>
+                                                <div className="text-lg font-bold text-blue-600">
+                                                    {
+                                                        whatIfScenario.distance_to_emergency
+                                                    }{" "}
+                                                    km
+                                                </div>
+                                            </div>
+                                            <div className="bg-white p-3 rounded">
+                                                <div className="text-xs text-gray-600">
+                                                    Additional Time
+                                                </div>
+                                                <div className="text-lg font-bold text-orange-600">
+                                                    {
+                                                        whatIfScenario.additional_time_hours
+                                                    }{" "}
+                                                    hrs
+                                                </div>
+                                            </div>
+                                            <div className="bg-white p-3 rounded">
+                                                <div className="text-xs text-gray-600">
+                                                    Additional Cost
+                                                </div>
+                                                <div className="text-lg font-bold text-green-600">
+                                                    $
+                                                    {
+                                                        whatIfScenario.additional_fuel_cost
+                                                    }
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 p-3 bg-white rounded">
+                                            <div className="font-medium text-purple-900">
+                                                💡 Recommendation:
+                                            </div>
+                                            <div className="text-gray-700">
+                                                {whatIfScenario.recommendation}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                            {selectedScenarioType === "breakdown" &&
+                                whatIfScenario.scenario ===
+                                    "vehicle_breakdown" && (
+                                    <div className="space-y-2">
+                                        {whatIfScenario.status ===
+                                        "resolved" ? (
+                                            <>
+                                                <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded">
+                                                    ✅ Alternative vehicle
+                                                    found:{" "}
+                                                    <strong>
+                                                        {
+                                                            whatIfScenario
+                                                                .recommended_vehicle
+                                                                .vehicle_name
+                                                        }
+                                                    </strong>
+                                                </div>
+                                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4">
+                                                    <div className="bg-white p-3 rounded">
+                                                        <div className="text-xs text-gray-600">
+                                                            Capacity
+                                                        </div>
+                                                        <div className="text-lg font-bold text-blue-600">
+                                                            $
+                                                            {whatIfScenario.recommended_vehicle.capacity.toLocaleString()}
+                                                        </div>
+                                                    </div>
+                                                    <div className="bg-white p-3 rounded">
+                                                        <div className="text-xs text-gray-600">
+                                                            Fuel Efficiency
+                                                        </div>
+                                                        <div className="text-lg font-bold text-green-600">
+                                                            {
+                                                                whatIfScenario
+                                                                    .recommended_vehicle
+                                                                    .fuel_efficiency
+                                                            }{" "}
+                                                            km/L
+                                                        </div>
+                                                    </div>
+                                                    <div className="bg-white p-3 rounded">
+                                                        <div className="text-xs text-gray-600">
+                                                            Estimated Cost
+                                                        </div>
+                                                        <div className="text-lg font-bold text-orange-600">
+                                                            $
+                                                            {
+                                                                whatIfScenario
+                                                                    .recommended_vehicle
+                                                                    .estimated_fuel_cost
+                                                            }
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+                                                ⚠️{" "}
+                                                {whatIfScenario.recommendation}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                            {selectedScenarioType === "cost" &&
+                                whatIfScenario.scenario ===
+                                    "cost_comparison" && (
+                                    <div className="space-y-4">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="bg-white p-4 rounded border-2 border-blue-300">
+                                                <div className="text-sm font-semibold text-blue-900 mb-2">
+                                                    Current Route
+                                                </div>
+                                                <div className="space-y-1 text-sm">
+                                                    <div>
+                                                        Distance:{" "}
+                                                        <span className="font-bold">
+                                                            {
+                                                                whatIfScenario
+                                                                    .current_route
+                                                                    .distance_km
+                                                            }{" "}
+                                                            km
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        Time:{" "}
+                                                        <span className="font-bold">
+                                                            {
+                                                                whatIfScenario
+                                                                    .current_route
+                                                                    .time_hours
+                                                            }{" "}
+                                                            hrs
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        Cost:{" "}
+                                                        <span className="font-bold">
+                                                            $
+                                                            {
+                                                                whatIfScenario
+                                                                    .current_route
+                                                                    .fuel_cost
+                                                            }
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        ATMs:{" "}
+                                                        <span className="font-bold">
+                                                            {
+                                                                whatIfScenario
+                                                                    .current_route
+                                                                    .atms_visited
+                                                            }
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="bg-white p-4 rounded border-2 border-green-300">
+                                                <div className="text-sm font-semibold text-green-900 mb-2">
+                                                    Alternative Route
+                                                </div>
+                                                <div className="space-y-1 text-sm">
+                                                    <div>
+                                                        Distance:{" "}
+                                                        <span className="font-bold">
+                                                            {
+                                                                whatIfScenario
+                                                                    .alternative_route
+                                                                    .distance_km
+                                                            }{" "}
+                                                            km
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        Time:{" "}
+                                                        <span className="font-bold">
+                                                            {
+                                                                whatIfScenario
+                                                                    .alternative_route
+                                                                    .time_hours
+                                                            }{" "}
+                                                            hrs
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        Cost:{" "}
+                                                        <span className="font-bold">
+                                                            $
+                                                            {
+                                                                whatIfScenario
+                                                                    .alternative_route
+                                                                    .fuel_cost
+                                                            }
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        ATMs:{" "}
+                                                        <span className="font-bold">
+                                                            {
+                                                                whatIfScenario
+                                                                    .alternative_route
+                                                                    .atms_visited
+                                                            }
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-white p-4 rounded">
+                                            <div className="text-sm font-semibold text-gray-900 mb-2">
+                                                Savings Analysis
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-4 text-sm">
+                                                <div>
+                                                    <div className="text-gray-600">
+                                                        Distance Saving
+                                                    </div>
+                                                    <div
+                                                        className={`font-bold ${
+                                                            whatIfScenario
+                                                                .differences
+                                                                .distance_saving_pct <
+                                                            0
+                                                                ? "text-green-600"
+                                                                : "text-red-600"
+                                                        }`}
+                                                    >
+                                                        {whatIfScenario.differences.distance_saving_pct.toFixed(
+                                                            1
+                                                        )}
+                                                        %
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-gray-600">
+                                                        Time Saving
+                                                    </div>
+                                                    <div
+                                                        className={`font-bold ${
+                                                            whatIfScenario
+                                                                .differences
+                                                                .time_saving_pct <
+                                                            0
+                                                                ? "text-green-600"
+                                                                : "text-red-600"
+                                                        }`}
+                                                    >
+                                                        {whatIfScenario.differences.time_saving_pct.toFixed(
+                                                            1
+                                                        )}
+                                                        %
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-gray-600">
+                                                        Cost Saving
+                                                    </div>
+                                                    <div
+                                                        className={`font-bold ${
+                                                            whatIfScenario
+                                                                .differences
+                                                                .cost_saving_pct <
+                                                            0
+                                                                ? "text-green-600"
+                                                                : "text-red-600"
+                                                        }`}
+                                                    >
+                                                        {whatIfScenario.differences.cost_saving_pct.toFixed(
+                                                            1
+                                                        )}
+                                                        %
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="mt-4 p-3 bg-purple-50 rounded border border-purple-200">
+                                                <div className="font-medium text-purple-900">
+                                                    💡 Recommendation:
+                                                </div>
+                                                <div className="text-gray-700">
+                                                    {whatIfScenario.reason}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
 
     const TransactionHistoryTab = () => {
         const [historyData, setHistoryData] = useState([]);
@@ -1366,13 +2588,15 @@ const SmartATMDashboard = () => {
                             onClick={() => setShowImportModal(true)}
                             className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-md flex items-center gap-2"
                         >
-                            � Import CSV
+                            <Upload className="h-4 w-4" />
+                            Import CSV
                         </button>
                         <button
                             onClick={handleExportCSV}
                             className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md flex items-center gap-2"
                         >
-                            � Export CSV
+                            <Download className="h-4 w-4" />
+                            Export CSV
                         </button>
                         <button
                             onClick={fetchTransactionHistory}
@@ -2191,6 +3415,7 @@ const SmartATMDashboard = () => {
 
     const ATMManagement = () => {
         const [showForm, setShowForm] = useState(false);
+        const [editingATM, setEditingATM] = useState(null);
         const [formData, setFormData] = useState({
             name: "",
             location: "",
@@ -2199,11 +3424,26 @@ const SmartATMDashboard = () => {
             daily_avg_demand: "",
         });
 
+        const handleEdit = (atm) => {
+            setEditingATM(atm);
+            setFormData({
+                name: atm.name,
+                location: atm.location,
+                capacity: atm.capacity,
+                current_balance: atm.current_balance,
+                daily_avg_demand: atm.daily_avg_demand,
+            });
+            setShowForm(true);
+        };
+
         const handleSubmit = async (e) => {
             e.preventDefault();
-            const success = await addATM(formData);
+            const success = editingATM
+                ? await updateATM(editingATM.id, formData)
+                : await addATM(formData);
             if (success) {
                 setShowForm(false);
+                setEditingATM(null);
                 setFormData({
                     name: "",
                     location: "",
@@ -2214,12 +3454,26 @@ const SmartATMDashboard = () => {
             }
         };
 
+        const handleCancel = () => {
+            setShowForm(false);
+            setEditingATM(null);
+            setFormData({
+                name: "",
+                location: "",
+                capacity: "",
+                current_balance: "",
+                daily_avg_demand: "",
+            });
+        };
+
         return (
             <div className="p-6 space-y-6">
                 <div className="flex justify-between items-center">
                     <h3 className="text-lg font-semibold">ATM Management</h3>
                     <button
-                        onClick={() => setShowForm(!showForm)}
+                        onClick={() =>
+                            showForm ? handleCancel() : setShowForm(true)
+                        }
                         className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md"
                     >
                         {showForm ? "Cancel" : "Add ATM"}
@@ -2299,7 +3553,7 @@ const SmartATMDashboard = () => {
                                 type="submit"
                                 className="col-span-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md"
                             >
-                                Add ATM
+                                {editingATM ? "Update ATM" : "Add ATM"}
                             </button>
                         </form>
                     </div>
@@ -2323,6 +3577,9 @@ const SmartATMDashboard = () => {
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                                     Status
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    Actions
                                 </th>
                             </tr>
                         </thead>
@@ -2362,6 +3619,22 @@ const SmartATMDashboard = () => {
                                                     : "Adequate"}
                                             </span>
                                         </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                            <button
+                                                onClick={() => handleEdit(atm)}
+                                                className="text-blue-600 hover:text-blue-900 font-medium mr-4"
+                                            >
+                                                Edit
+                                            </button>
+                                            <button
+                                                onClick={() =>
+                                                    deleteATM(atm.id)
+                                                }
+                                                className="text-red-600 hover:text-red-900 font-medium"
+                                            >
+                                                Delete
+                                            </button>
+                                        </td>
                                     </tr>
                                 );
                             })}
@@ -2371,6 +3644,11 @@ const SmartATMDashboard = () => {
             </div>
         );
     };
+
+    // Show login page if not authenticated (after all hooks and component definitions)
+    if (!isAuthenticated) {
+        return <AuthPage onLogin={handleLogin} />;
+    }
 
     return (
         <div className="min-h-screen bg-gray-100">
@@ -2382,6 +3660,37 @@ const SmartATMDashboard = () => {
                             <span className="text-xl font-bold text-gray-900">
                                 Smart ATM Optimizer
                             </span>
+                        </div>
+                        
+                        {/* User Menu */}
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                                <User className="h-4 w-4" />
+                                <span>{currentUser?.email}</span>
+                            </div>
+                            
+                            {/* Access Control Button (Root Only) */}
+                            {currentUser?.is_root && (
+                                <button
+                                    onClick={() => setActiveTab('access-control')}
+                                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition ${
+                                        activeTab === 'access-control'
+                                            ? 'bg-purple-600 text-white'
+                                            : 'text-purple-700 hover:text-purple-900 hover:bg-purple-50 border-2 border-purple-600'
+                                    }`}
+                                >
+                                    <Shield className="h-4 w-4" />
+                                    Access Control
+                                </button>
+                            )}
+                            
+                            <button
+                                onClick={handleLogout}
+                                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+                            >
+                                <LogOut className="h-4 w-4" />
+                                Logout
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -2404,6 +3713,11 @@ const SmartATMDashboard = () => {
                                         icon: Brain,
                                     },
                                     {
+                                        id: "ai-recommendations",
+                                        label: "AI Recommendations",
+                                        icon: Sparkles,
+                                    },
+                                    {
                                         id: "optimization",
                                         label: "Optimization",
                                         icon: Settings,
@@ -2422,6 +3736,21 @@ const SmartATMDashboard = () => {
                                         id: "atms",
                                         label: "ATMs",
                                         icon: Database,
+                                    },
+                                    {
+                                        id: "vehicles",
+                                        label: "Vehicles",
+                                        icon: Truck,
+                                    },
+                                    {
+                                        id: "route-planning",
+                                        label: "Route Planning",
+                                        icon: Map,
+                                    },
+                                    {
+                                        id: "route-dashboard",
+                                        label: "Routes",
+                                        icon: Route,
                                     },
                                 ].map((item) => {
                                     const Icon = item.icon;
@@ -2449,12 +3778,19 @@ const SmartATMDashboard = () => {
                     <div className="flex-1">
                         {activeTab === "dashboard" && <Dashboard />}
                         {activeTab === "ml-forecast" && <MLForecastTab />}
+                        {activeTab === "ai-recommendations" && (
+                            <AIRecommendationsTab />
+                        )}
                         {activeTab === "optimization" && <OptimizationTab />}
                         {activeTab === "transaction-history" && (
                             <TransactionHistoryTab />
                         )}
                         {activeTab === "vaults" && <VaultManagement />}
                         {activeTab === "atms" && <ATMManagement />}
+                        {activeTab === "vehicles" && <VehicleManagement />}
+                        {activeTab === "route-planning" && <RoutePlanning />}
+                        {activeTab === "route-dashboard" && <RouteDashboard />}
+                        {activeTab === "access-control" && currentUser?.is_root && <AccessControl />}
                     </div>
                 </div>
             </div>
