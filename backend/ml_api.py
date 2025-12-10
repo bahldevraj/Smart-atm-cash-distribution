@@ -11,6 +11,7 @@ import pickle
 import os
 import sys
 
+<<<<<<< HEAD
 # Use centralized path configuration
 from path_config import (
     get_saved_models_dir,
@@ -18,6 +19,12 @@ from path_config import (
     get_model_path,
     get_lstm_scaler_path
 )
+=======
+# Add ml_models to path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ml_models_path = os.path.join(project_root, 'ml_models')
+sys.path.insert(0, ml_models_path)
+>>>>>>> 8d9d393 (Access Control Implemented)
 
 from forecasting_models import ARIMAForecaster, LSTMForecaster, EnsembleForecaster
 
@@ -26,6 +33,7 @@ ml_forecast_bp = Blueprint('ml_forecast', __name__, url_prefix='/api/ml')
 
 # Global variables to store loaded models
 loaded_models = {}
+<<<<<<< HEAD
 MODEL_DIR = str(get_saved_models_dir())
 DATA_PATH = str(get_data_dir() / 'atm_demand_data.csv')
 
@@ -83,6 +91,48 @@ def load_model_for_atm(atm_id: int, model_type: str = 'ensemble'):
     
     print(f"🔍 Loading {actual_model_type} model for ATM {atm_id}")
     print(f"   Path: {model_path}")
+=======
+MODEL_DIR = os.path.join(project_root, 'ml_models', 'saved_models')
+DATA_PATH = os.path.join(project_root, 'ml_models', 'data', 'atm_demand_data.csv')
+
+
+def load_model_for_atm(atm_id: int, model_type: str = 'ensemble'):
+    """Load trained model for specific ATM"""
+    model_key = f"{model_type}_atm_{atm_id}"
+    
+    if model_key in loaded_models:
+        return loaded_models[model_key]
+    
+    # Try different naming conventions for model files
+    if model_type == 'arima':
+        # Try new naming convention first
+        model_path = os.path.join(MODEL_DIR, f"arima_model_atm_{atm_id}.pkl")
+        if not os.path.exists(model_path):
+            # Try old naming convention
+            model_path = os.path.join(MODEL_DIR, f"arima_atm_{atm_id}.pkl")
+    elif model_type == 'lstm':
+        # LSTM models use .h5 format
+        model_path = os.path.join(MODEL_DIR, f"lstm_model_atm_{atm_id}.h5")
+        if not os.path.exists(model_path):
+            # Try old naming convention
+            model_path = os.path.join(MODEL_DIR, f"lstm_atm_{atm_id}.pkl")
+    elif model_type == 'ensemble':
+        # For ensemble, use ARIMA model as fallback since we don't have separate ensemble models
+        model_path = os.path.join(MODEL_DIR, f"ensemble_atm_{atm_id}.pkl")
+        if not os.path.exists(model_path):
+            # Fallback to ARIMA model
+            print(f"⚠ No dedicated ensemble model, using ARIMA for ATM {atm_id}")
+            model_path = os.path.join(MODEL_DIR, f"arima_model_atm_{atm_id}.pkl")
+            if not os.path.exists(model_path):
+                model_path = os.path.join(MODEL_DIR, f"arima_atm_{atm_id}.pkl")
+    else:
+        # other types
+        model_path = os.path.join(MODEL_DIR, f"{model_type}_atm_{atm_id}.pkl")
+    
+    if not os.path.exists(model_path):
+        print(f"✗ Model file not found: {model_path}")
+        return None
+>>>>>>> 8d9d393 (Access Control Implemented)
     
     try:
         # Load LSTM models differently
@@ -94,8 +144,13 @@ def load_model_for_atm(atm_id: int, model_type: str = 'ensemble'):
                 model = keras_load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='mse')  # Quick compile
                 
+<<<<<<< HEAD
                 # Load scaler using centralized path config
                 scaler_path = str(get_lstm_scaler_path(atm_id))
+=======
+                # Load scaler
+                scaler_path = os.path.join(MODEL_DIR, f"lstm_scaler_atm_{atm_id}.pkl")
+>>>>>>> 8d9d393 (Access Control Implemented)
                 if os.path.exists(scaler_path):
                     with open(scaler_path, 'rb') as f:
                         scaler = pickle.load(f)
@@ -150,6 +205,7 @@ def load_model_for_atm(atm_id: int, model_type: str = 'ensemble'):
         if not hasattr(forecaster, 'is_trained'):
             forecaster.is_trained = True
         
+<<<<<<< HEAD
         print(f"✓ Successfully loaded {actual_model_type} model for ATM {atm_id}")
         loaded_models[model_key] = forecaster
         
@@ -159,11 +215,20 @@ def load_model_for_atm(atm_id: int, model_type: str = 'ensemble'):
             loaded_models[actual_key] = forecaster
         
         return forecaster, actual_model_type
+=======
+        print(f"✓ Successfully loaded {model_type} model for ATM {atm_id}")
+        loaded_models[model_key] = forecaster
+        return forecaster
+>>>>>>> 8d9d393 (Access Control Implemented)
     except Exception as e:
         print(f"Error loading model: {e}")
         import traceback
         traceback.print_exc()
+<<<<<<< HEAD
         return None, None
+=======
+        return None
+>>>>>>> 8d9d393 (Access Control Implemented)
 
 
 def get_recent_data(atm_id: int, days: int = 30):
@@ -203,6 +268,7 @@ def ml_forecast(atm_id):
         }), 400
     
     # Load model
+<<<<<<< HEAD
     model, actual_model_type = load_model_for_atm(atm_id, model_type)
     
     if model is None:
@@ -252,6 +318,20 @@ def ml_forecast(atm_id):
         # Get recent data for LSTM/ensemble (use actual_model_type)
         recent_data = None
         if actual_model_type in ['lstm', 'ensemble']:
+=======
+    model = load_model_for_atm(atm_id, model_type)
+    
+    if model is None:
+        return jsonify({
+            'error': f'Model not found for ATM {atm_id}',
+            'message': 'Please train the model first using the notebooks'
+        }), 404
+    
+    try:
+        # Get recent data for LSTM/ensemble
+        recent_data = None
+        if model_type in ['lstm', 'ensemble']:
+>>>>>>> 8d9d393 (Access Control Implemented)
             recent_data = get_recent_data(atm_id, days=30)
             if recent_data is None:
                 return jsonify({
@@ -259,8 +339,13 @@ def ml_forecast(atm_id):
                     'message': 'Historical data required for LSTM predictions'
                 }), 500
         
+<<<<<<< HEAD
         # Make prediction based on actual model type loaded
         if actual_model_type == 'arima' or actual_model_type == 'ensemble':
+=======
+        # Make prediction based on model type
+        if model_type == 'arima' or model_type == 'ensemble':
+>>>>>>> 8d9d393 (Access Control Implemented)
             # ARIMA/Ensemble models use forecast() method (statsmodels)
             if hasattr(model, 'forecast'):
                 predictions = model.forecast(steps=days_ahead)
@@ -268,7 +353,11 @@ def ml_forecast(atm_id):
                 predictions = model.predict(steps=days_ahead)
             else:
                 raise ValueError("Model has no forecast or predict method")
+<<<<<<< HEAD
         elif actual_model_type == 'lstm' and recent_data is not None:
+=======
+        elif model_type == 'lstm' and recent_data is not None:
+>>>>>>> 8d9d393 (Access Control Implemented)
             predictions = model.predict(steps=days_ahead, recent_data=recent_data)
         else:
             predictions = model.predict(steps=days_ahead)
@@ -299,8 +388,12 @@ def ml_forecast(atm_id):
         
         return jsonify({
             'atm_id': atm_id,
+<<<<<<< HEAD
             'model_type': actual_model_type,  # Return the actual model type used
             'requested_model_type': model_type,  # What was requested
+=======
+            'model_type': model_type,
+>>>>>>> 8d9d393 (Access Control Implemented)
             'forecast': forecast_data,
             'total_predicted_demand': round(float(np.sum(predictions)), 2),
             'total_predicted_demand_formatted': f"${np.sum(predictions):,.2f}",

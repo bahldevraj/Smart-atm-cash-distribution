@@ -6,6 +6,7 @@ Uses existing ARIMA/Ensemble models to predict cash requirements
 import sys
 import os
 
+<<<<<<< HEAD
 # Use centralized path configuration
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from path_config import (
@@ -13,6 +14,12 @@ from path_config import (
     get_model_path,
     get_lstm_scaler_path
 )
+=======
+# Add ml_models directory to path
+ml_models_path = os.path.join(os.path.dirname(__file__), '..', '..', 'ml_models')
+if ml_models_path not in sys.path:
+    sys.path.append(ml_models_path)
+>>>>>>> 8d9d393 (Access Control Implemented)
 
 import pickle
 import pandas as pd
@@ -33,7 +40,16 @@ class PredictionService:
     
     def __init__(self, models_dir: str = None):
         if models_dir is None:
+<<<<<<< HEAD
             self.models_dir = str(get_saved_models_dir())
+=======
+            self.models_dir = os.path.join(
+                os.path.dirname(__file__), 
+                '..', '..', 
+                'ml_models', 
+                'saved_models'
+            )
+>>>>>>> 8d9d393 (Access Control Implemented)
         else:
             self.models_dir = models_dir
         
@@ -252,6 +268,7 @@ class PredictionService:
             }
         
         return summary
+<<<<<<< HEAD
     
     def _fallback_prediction(self, atm_id: int, days: int = 7) -> List[float]:
         """
@@ -273,6 +290,8 @@ class PredictionService:
             print(f"⚠ Fallback prediction error: {e}")
             # Return safe conservative values
             return [60000.0] * days
+=======
+>>>>>>> 8d9d393 (Access Control Implemented)
 
 # Singleton instance
 _prediction_service = None

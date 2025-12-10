@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Core Flask Dependencies
 Flask==2.3.0
 Flask-SQLAlchemy==3.0.5
@@ -5,10 +6,16 @@ Flask-CORS==4.0.0
 Werkzeug==2.3.0
 
 # Data Processing & Analysis
+=======
+Flask==2.3.0
+Flask-SQLAlchemy==3.0.5
+Flask-CORS==4.0.0
+>>>>>>> 8d9d393 (Access Control Implemented)
 numpy==1.24.3
 pandas==2.0.2
 scikit-learn==1.2.2
 scipy==1.10.1
+<<<<<<< HEAD
 
 # Authentication & Security
 PyJWT==2.8.0
@@ -25,3 +32,8 @@ ortools==9.7.2996
 
 # Optional: For enhanced performance
 # psutil==5.9.5  # System monitoring
+=======
+PyJWT==2.8.0
+Werkzeug==2.3.0
+python-dotenv==1.0.0
+>>>>>>> 8d9d393 (Access Control Implemented)
