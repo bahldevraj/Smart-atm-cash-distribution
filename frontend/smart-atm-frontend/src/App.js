@@ -36,31 +36,19 @@ import {
     LogOut,
     User,
     Shield,
-<<<<<<< HEAD
     UserCog,
     Maximize,
     Gauge,
-=======
->>>>>>> 8d9d393 (Access Control Implemented)
 } from "lucide-react";
 import VehicleManagement from "./VehicleManagement";
 import RoutePlanning from "./RoutePlanning";
 import RouteDashboard from "./RouteDashboard";
 import AccessControl from "./AccessControl";
 import AuthPage from "./AuthPage";
-<<<<<<< HEAD
 import ModelTrainingModal from "./ModelTrainingModal";
 import SyntheticDataGenerator from "./SyntheticDataGenerator";
 import MetricsModal from "./MetricsModal";
 import ProfileManager from "./ProfileManager";
-=======
-
-console.log("Routing components loaded:", {
-    VehicleManagement: !!VehicleManagement,
-    RoutePlanning: !!RoutePlanning,
-    RouteDashboard: !!RouteDashboard,
-});
->>>>>>> 8d9d393 (Access Control Implemented)
 
 console.log("Routing components loaded:", {
     VehicleManagement: !!VehicleManagement,
@@ -101,18 +89,12 @@ const SmartATMDashboard = () => {
             const timestamp = new Date().getTime();
             const [vaultsRes, atmsRes, transactionsRes, analyticsRes] =
                 await Promise.all([
-                    fetch(`${API_BASE}/vaults?_=${timestamp}`).then((r) =>
+                    fetch(`${API_BASE}/vaults?_=${timestamp}`).then((r) => r.json()),
+                    fetch(`${API_BASE}/atms?_=${timestamp}`).then((r) => r.json()),
+                    fetch(`${API_BASE}/transactions?_=${timestamp}`).then((r) => r.json()),
+                    fetch(`${API_BASE}/analytics/dashboard?_=${timestamp}`).then((r) =>
                         r.json()
                     ),
-                    fetch(`${API_BASE}/atms?_=${timestamp}`).then((r) =>
-                        r.json()
-                    ),
-                    fetch(`${API_BASE}/transactions?_=${timestamp}`).then((r) =>
-                        r.json()
-                    ),
-                    fetch(
-                        `${API_BASE}/analytics/dashboard?_=${timestamp}`
-                    ).then((r) => r.json()),
                 ]);
 
             console.log("✅ Data loaded:", {
@@ -122,14 +104,7 @@ const SmartATMDashboard = () => {
             });
             console.log(
                 "ATMs:",
-                atmsRes
-                    .map(
-                        (a) =>
-                            `${a.id}. ${a.name} - Profile: ${
-                                a.detected_profile || "auto"
-                            }`
-                    )
-                    .join(", ")
+                atmsRes.map((a) => `${a.id}. ${a.name} - Profile: ${a.detected_profile || 'auto'}`).join(", ")
             );
 
             setVaults(vaultsRes);
@@ -243,7 +218,6 @@ const SmartATMDashboard = () => {
     }, [activeTab, selectedATMForForecast, fetchMLMetrics]);
 
     // CRUD Operations - memoized
-<<<<<<< HEAD
     const addVault = useCallback(
         async (vaultData) => {
             try {
@@ -368,16 +342,16 @@ const SmartATMDashboard = () => {
         [fetchData]
     );
 
-    // Check authentication on mount - DISABLED: Always start with login page
-    // useEffect(() => {
-    //     const token = localStorage.getItem("token");
-    //     const user = localStorage.getItem("user");
-    //
-    //     if (token && user) {
-    //         setIsAuthenticated(true);
-    //         setCurrentUser(JSON.parse(user));
-    //     }
-    // }, []);
+    // Check authentication on mount
+    useEffect(() => {
+        const token = localStorage.getItem("token");
+        const user = localStorage.getItem("user");
+
+        if (token && user) {
+            setIsAuthenticated(true);
+            setCurrentUser(JSON.parse(user));
+        }
+    }, []);
 
     // Helper function to get auth headers
     const getAuthHeaders = () => {
@@ -392,155 +366,17 @@ const SmartATMDashboard = () => {
     const handleLogin = (token, user) => {
         localStorage.setItem("token", token);
         localStorage.setItem("user", JSON.stringify(user));
-=======
-    const addVault = useCallback(async (vaultData) => {
-        try {
-            const response = await fetch(`${API_BASE}/vaults`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(vaultData),
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
-            }
-        } catch (error) {
-            console.error("Failed to add vault:", error);
-        }
-        return false;
-    }, [fetchData]);
-
-    const updateVault = useCallback(async (vaultId, vaultData) => {
-        try {
-            const response = await fetch(`${API_BASE}/vaults/${vaultId}`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(vaultData),
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
-            }
-        } catch (error) {
-            console.error("Failed to update vault:", error);
-        }
-        return false;
-    }, [fetchData]);
-
-    const deleteVault = useCallback(async (vaultId) => {
-        if (!window.confirm("Are you sure you want to delete this vault?")) {
-            return;
-        }
-        try {
-            const response = await fetch(`${API_BASE}/vaults/${vaultId}`, {
-                method: "DELETE",
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
-            }
-        } catch (error) {
-            console.error("Failed to delete vault:", error);
-        }
-        return false;
-    }, [fetchData]);
-
-    const addATM = useCallback(async (atmData) => {
-        try {
-            const response = await fetch(`${API_BASE}/atms`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(atmData),
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
-            }
-        } catch (error) {
-            console.error("Failed to add ATM:", error);
-        }
-        return false;
-    }, [fetchData]);
-
-    const updateATM = useCallback(async (atmId, atmData) => {
-        try {
-            const response = await fetch(`${API_BASE}/atms/${atmId}`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(atmData),
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
-            }
-        } catch (error) {
-            console.error("Failed to update ATM:", error);
-        }
-        return false;
-    }, [fetchData]);
-
-    const deleteATM = useCallback(async (atmId) => {
-        if (!window.confirm("Are you sure you want to delete this ATM?")) {
-            return;
-        }
-        try {
-            const response = await fetch(`${API_BASE}/atms/${atmId}`, {
-                method: "DELETE",
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
-            }
-        } catch (error) {
-            console.error("Failed to delete ATM:", error);
-        }
-        return false;
-    }, [fetchData]);
-
-    // Check authentication on mount
-    useEffect(() => {
-        const token = localStorage.getItem('token');
-        const user = localStorage.getItem('user');
-        
-        if (token && user) {
-            setIsAuthenticated(true);
-            setCurrentUser(JSON.parse(user));
-        }
-    }, []);
-
-    // Helper function to get auth headers
-    const getAuthHeaders = () => {
-        const token = localStorage.getItem('token');
-        return {
-            'Content-Type': 'application/json',
-            'Authorization': token ? `Bearer ${token}` : ''
-        };
-    };
-
-    // Handle login
-    const handleLogin = (token, user) => {
-        localStorage.setItem('token', token);
-        localStorage.setItem('user', JSON.stringify(user));
->>>>>>> 8d9d393 (Access Control Implemented)
         setIsAuthenticated(true);
         setCurrentUser(user);
     };
 
     // Handle logout
     const handleLogout = () => {
-<<<<<<< HEAD
         localStorage.removeItem("token");
         localStorage.removeItem("user");
         setIsAuthenticated(false);
         setCurrentUser(null);
         setActiveTab("dashboard");
-=======
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        setIsAuthenticated(false);
-        setCurrentUser(null);
-        setActiveTab('dashboard');
->>>>>>> 8d9d393 (Access Control Implemented)
     };
 
     // Components
@@ -554,7 +390,6 @@ const SmartATMDashboard = () => {
         }, []);
 
         // Memoize expensive computations (must be before any early returns)
-<<<<<<< HEAD
         const utilizationData = useMemo(
             () =>
                 analytics?.atm_utilization?.map((atm) => ({
@@ -630,70 +465,6 @@ const SmartATMDashboard = () => {
                           }))
                     : [],
             [analytics]
-=======
-        const utilizationData = useMemo(() => 
-            analytics?.atm_utilization?.map((atm) => ({
-                name: atm.name.replace("ATM ", ""),
-                utilization: atm.utilization,
-                balance: atm.current_balance / 1000,
-                capacity: atm.capacity / 1000,
-            })) || [], [analytics]
-        );
-
-        // ATM Status Distribution - memoized
-        const atmStatusData = useMemo(() => 
-            analytics?.atm_utilization?.reduce(
-                (acc, atm) => {
-                    const utilizationPct =
-                        (atm.current_balance / atm.capacity) * 100;
-                    if (utilizationPct < 20) acc.critical++;
-                    else if (utilizationPct < 50) acc.warning++;
-                    else acc.healthy++;
-                    return acc;
-                },
-                { healthy: 0, warning: 0, critical: 0 }
-            ) || { healthy: 0, warning: 0, critical: 0 }, [analytics]
-        );
-
-        const statusPieData = useMemo(() => [
-            {
-                name: "Healthy (>50%)",
-                value: atmStatusData.healthy,
-                color: "#10B981",
-            },
-            {
-                name: "Warning (20-50%)",
-                value: atmStatusData.warning,
-                color: "#F59E0B",
-            },
-            {
-                name: "Critical (<20%)",
-                value: atmStatusData.critical,
-                color: "#EF4444",
-            },
-        ], [atmStatusData]);
-
-        // Vault Balance Distribution - memoized
-        const vaultBalanceData = useMemo(() => 
-            vaults.map((vault) => ({
-                name: vault.name
-                    .replace("Vault - ", "")
-                    .replace("Main Vault - ", ""),
-                balance: vault.current_balance / 1000000,
-                capacity: vault.capacity / 1000000,
-                utilization: (vault.current_balance / vault.capacity) * 100,
-            })), [vaults]
-        );
-
-        // All ATMs by utilization - memoized
-        const allAtmsByUtilization = useMemo(() => 
-            analytics?.atm_utilization ? [...analytics.atm_utilization]
-                .sort((a, b) => b.utilization - a.utilization)
-                .map((atm) => ({
-                    name: atm.name.replace("ATM ", ""),
-                    utilization: atm.utilization,
-                })) : [], [analytics]
->>>>>>> 8d9d393 (Access Control Implemented)
         );
 
         const COLORS = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6"];
@@ -1110,11 +881,8 @@ const SmartATMDashboard = () => {
             setFormData({
                 name: vault.name,
                 location: vault.location,
-<<<<<<< HEAD
                 latitude: vault.latitude || "",
                 longitude: vault.longitude || "",
-=======
->>>>>>> 8d9d393 (Access Control Implemented)
                 capacity: vault.capacity,
                 current_balance: vault.current_balance,
             });
@@ -1146,11 +914,8 @@ const SmartATMDashboard = () => {
             setFormData({
                 name: "",
                 location: "",
-<<<<<<< HEAD
                 latitude: "",
                 longitude: "",
-=======
->>>>>>> 8d9d393 (Access Control Implemented)
                 capacity: "",
                 current_balance: "",
             });
@@ -3787,13 +3552,10 @@ const SmartATMDashboard = () => {
     const ATMManagement = () => {
         const [showForm, setShowForm] = useState(false);
         const [editingATM, setEditingATM] = useState(null);
-<<<<<<< HEAD
         const [trainingModalATM, setTrainingModalATM] = useState(null);
         const [syntheticDataATM, setSyntheticDataATM] = useState(null);
         const [metricsModalATM, setMetricsModalATM] = useState(null);
         const [availableProfiles, setAvailableProfiles] = useState([]);
-=======
->>>>>>> 8d9d393 (Access Control Implemented)
         const [formData, setFormData] = useState({
             name: "",
             location: "",
@@ -3807,23 +3569,22 @@ const SmartATMDashboard = () => {
             profile_override_id: null,
         });
 
-<<<<<<< HEAD
         // Fetch available profiles
         useEffect(() => {
             const fetchProfiles = async () => {
                 try {
-                    const token = localStorage.getItem("token");
+                    const token = localStorage.getItem('token');
                     const response = await fetch(`${API_BASE}/profiles`, {
                         headers: {
-                            Authorization: `Bearer ${token}`,
-                        },
+                            'Authorization': `Bearer ${token}`
+                        }
                     });
                     if (response.ok) {
                         const data = await response.json();
                         setAvailableProfiles(data);
                     }
                 } catch (error) {
-                    console.error("Failed to fetch profiles:", error);
+                    console.error('Failed to fetch profiles:', error);
                 }
             };
             fetchProfiles();
@@ -3833,14 +3594,11 @@ const SmartATMDashboard = () => {
         const untrainedATMs = atms.filter((a) => a.transaction_count === 0);
         const trainedATMs = atms.filter((a) => a.transaction_count > 0);
 
-=======
->>>>>>> 8d9d393 (Access Control Implemented)
         const handleEdit = (atm) => {
             setEditingATM(atm);
             setFormData({
                 name: atm.name,
                 location: atm.location,
-<<<<<<< HEAD
                 latitude: atm.latitude || "",
                 longitude: atm.longitude || "",
                 capacity: atm.capacity,
@@ -3849,11 +3607,6 @@ const SmartATMDashboard = () => {
                 profile_override: atm.profile_override || null,
                 profile_override_type: atm.profile_override_type || null,
                 profile_override_id: atm.profile_override_id || null,
-=======
-                capacity: atm.capacity,
-                current_balance: atm.current_balance,
-                daily_avg_demand: atm.daily_avg_demand,
->>>>>>> 8d9d393 (Access Control Implemented)
             });
             setShowForm(true);
         };
@@ -3887,7 +3640,6 @@ const SmartATMDashboard = () => {
             setFormData({
                 name: "",
                 location: "",
-<<<<<<< HEAD
                 latitude: "",
                 longitude: "",
                 capacity: "",
@@ -3925,14 +3677,6 @@ const SmartATMDashboard = () => {
             }
         };
 
-=======
-                capacity: "",
-                current_balance: "",
-                daily_avg_demand: "",
-            });
-        };
-
->>>>>>> 8d9d393 (Access Control Implemented)
         return (
             <div className="p-6 space-y-6">
                 <div className="flex justify-between items-center">
@@ -4042,104 +3786,70 @@ const SmartATMDashboard = () => {
                                 className="border border-gray-300 rounded-md px-3 py-2 col-span-3"
                                 required
                             />
-
+                            
                             {/* Profile Override Selector */}
                             <div className="col-span-3">
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
                                     Profile Override (Optional)
                                 </label>
                                 <select
-                                    value={
-                                        formData.profile_override_type ===
-                                        "preset"
-                                            ? formData.profile_override
-                                            : formData.profile_override_type ===
-                                              "custom"
-                                            ? `custom_${formData.profile_override_id}`
-                                            : "auto"
-                                    }
+                                    value={formData.profile_override_type === 'preset' ? formData.profile_override : 
+                                           formData.profile_override_type === 'custom' ? `custom_${formData.profile_override_id}` : 
+                                           'auto'}
                                     onChange={(e) => {
                                         const value = e.target.value;
-                                        if (value === "auto") {
+                                        if (value === 'auto') {
                                             setFormData({
                                                 ...formData,
                                                 profile_override: null,
                                                 profile_override_type: null,
-                                                profile_override_id: null,
+                                                profile_override_id: null
                                             });
-                                        } else if (
-                                            value.startsWith("custom_")
-                                        ) {
-                                            const customId = parseInt(
-                                                value.replace("custom_", "")
-                                            );
-                                            const customProfile =
-                                                availableProfiles.find(
-                                                    (p) => p.id === customId
-                                                );
+                                        } else if (value.startsWith('custom_')) {
+                                            const customId = parseInt(value.replace('custom_', ''));
+                                            const customProfile = availableProfiles.find(p => p.id === customId);
                                             setFormData({
                                                 ...formData,
-                                                profile_override:
-                                                    customProfile?.name,
-                                                profile_override_type: "custom",
-                                                profile_override_id: customId,
+                                                profile_override: customProfile?.name,
+                                                profile_override_type: 'custom',
+                                                profile_override_id: customId
                                             });
                                         } else {
                                             setFormData({
                                                 ...formData,
                                                 profile_override: value,
-                                                profile_override_type: "preset",
-                                                profile_override_id: null,
+                                                profile_override_type: 'preset',
+                                                profile_override_id: null
                                             });
                                         }
                                     }}
                                     className="w-full border border-gray-300 rounded-md px-3 py-2"
                                 >
-                                    <option value="auto">
-                                        Auto-detect from location
-                                    </option>
+                                    <option value="auto">Auto-detect from location</option>
                                     <optgroup label="Preset Profiles">
-                                        {availableProfiles
-                                            .filter((p) => p.is_preset)
-                                            .map((profile) => (
-                                                <option
-                                                    key={profile.name}
-                                                    value={profile.name}
-                                                >
-                                                    {profile.name.replace(
-                                                        /_/g,
-                                                        " "
-                                                    )}{" "}
-                                                    ({profile.usage_count} ATMs)
+                                        {availableProfiles.filter(p => p.is_preset).map(profile => (
+                                            <option key={profile.name} value={profile.name}>
+                                                {profile.name.replace(/_/g, ' ')} ({profile.usage_count} ATMs)
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                    {availableProfiles.filter(p => !p.is_preset).length > 0 && (
+                                        <optgroup label="Custom Profiles">
+                                            {availableProfiles.filter(p => !p.is_preset).map(profile => (
+                                                <option key={profile.id} value={`custom_${profile.id}`}>
+                                                    {profile.name} ({profile.usage_count} ATMs)
                                                 </option>
                                             ))}
-                                    </optgroup>
-                                    {availableProfiles.filter(
-                                        (p) => !p.is_preset
-                                    ).length > 0 && (
-                                        <optgroup label="Custom Profiles">
-                                            {availableProfiles
-                                                .filter((p) => !p.is_preset)
-                                                .map((profile) => (
-                                                    <option
-                                                        key={profile.id}
-                                                        value={`custom_${profile.id}`}
-                                                    >
-                                                        {profile.name} (
-                                                        {profile.usage_count}{" "}
-                                                        ATMs)
-                                                    </option>
-                                                ))}
                                         </optgroup>
                                     )}
                                 </select>
                                 <p className="text-xs text-gray-500 mt-1">
-                                    {formData.profile_override_type
-                                        ? `Using ${formData.profile_override_type} profile: ${formData.profile_override}`
-                                        : "Profile will be auto-detected from ATM name and location"}
+                                    {formData.profile_override_type ? 
+                                        `Using ${formData.profile_override_type} profile: ${formData.profile_override}` : 
+                                        'Profile will be auto-detected from ATM name and location'}
                                 </p>
                             </div>
-
+                            
                             <button
                                 type="submit"
                                 className="col-span-3 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md"
@@ -4193,9 +3903,6 @@ const SmartATMDashboard = () => {
                                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">
                                     Actions
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                                    Actions
-                                </th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
@@ -4231,10 +3938,7 @@ const SmartATMDashboard = () => {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                                             {atm.detected_profile ? (
                                                 <span className="px-2 py-1 text-xs rounded-md bg-purple-100 text-purple-800 font-medium">
-                                                    {atm.detected_profile.replace(
-                                                        /_/g,
-                                                        " "
-                                                    )}
+                                                    {atm.detected_profile.replace(/_/g, ' ')}
                                                 </span>
                                             ) : (
                                                 <span className="text-xs text-gray-400">
@@ -4270,7 +3974,7 @@ const SmartATMDashboard = () => {
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            {atm.mape === "outdated" ? (
+                                            {atm.mape === 'outdated' ? (
                                                 <div className="flex flex-col gap-1">
                                                     <span className="px-2 py-1 text-xs rounded-full font-medium bg-orange-100 text-orange-800">
                                                         ⚠ Outdated
@@ -4340,7 +4044,6 @@ const SmartATMDashboard = () => {
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm">
-<<<<<<< HEAD
                                             <div className="flex items-center justify-center gap-2">
                                                 {atm.transaction_count === 0 ? (
                                                     <>
@@ -4398,22 +4101,6 @@ const SmartATMDashboard = () => {
                                                     Delete
                                                 </button>
                                             </div>
-=======
-                                            <button
-                                                onClick={() => handleEdit(atm)}
-                                                className="text-blue-600 hover:text-blue-900 font-medium mr-4"
-                                            >
-                                                Edit
-                                            </button>
-                                            <button
-                                                onClick={() =>
-                                                    deleteATM(atm.id)
-                                                }
-                                                className="text-red-600 hover:text-red-900 font-medium"
-                                            >
-                                                Delete
-                                            </button>
->>>>>>> 8d9d393 (Access Control Implemented)
                                         </td>
                                     </tr>
                                 );
@@ -4482,18 +4169,13 @@ const SmartATMDashboard = () => {
                                 Smart ATM Optimizer
                             </span>
                         </div>
-<<<<<<< HEAD
 
-=======
-                        
->>>>>>> 8d9d393 (Access Control Implemented)
                         {/* User Menu */}
                         <div className="flex items-center gap-4">
                             <div className="flex items-center gap-2 text-sm text-gray-600">
                                 <User className="h-4 w-4" />
                                 <span>{currentUser?.email}</span>
                             </div>
-<<<<<<< HEAD
 
                             {/* Access Control Button (Root Only) */}
                             {currentUser?.is_root && (
@@ -4505,28 +4187,13 @@ const SmartATMDashboard = () => {
                                         activeTab === "access-control"
                                             ? "bg-purple-600 text-white"
                                             : "text-purple-700 hover:text-purple-900 hover:bg-purple-50 border-2 border-purple-600"
-=======
-                            
-                            {/* Access Control Button (Root Only) */}
-                            {currentUser?.is_root && (
-                                <button
-                                    onClick={() => setActiveTab('access-control')}
-                                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition ${
-                                        activeTab === 'access-control'
-                                            ? 'bg-purple-600 text-white'
-                                            : 'text-purple-700 hover:text-purple-900 hover:bg-purple-50 border-2 border-purple-600'
->>>>>>> 8d9d393 (Access Control Implemented)
                                     }`}
                                 >
                                     <Shield className="h-4 w-4" />
                                     Access Control
                                 </button>
                             )}
-<<<<<<< HEAD
 
-=======
-                            
->>>>>>> 8d9d393 (Access Control Implemented)
                             <button
                                 onClick={handleLogout}
                                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
@@ -4618,9 +4285,7 @@ const SmartATMDashboard = () => {
                                 {/* Admin-only Profile Manager */}
                                 {currentUser?.is_root && (
                                     <button
-                                        onClick={() =>
-                                            setActiveTab("profile-manager")
-                                        }
+                                        onClick={() => setActiveTab("profile-manager")}
                                         className={`w-full flex items-center px-4 py-2 text-left rounded-md transition-colors ${
                                             activeTab === "profile-manager"
                                                 ? "bg-purple-50 text-purple-700 border-r-2 border-purple-500"
@@ -4650,14 +4315,10 @@ const SmartATMDashboard = () => {
                         {activeTab === "vehicles" && <VehicleManagement />}
                         {activeTab === "route-planning" && <RoutePlanning />}
                         {activeTab === "route-dashboard" && <RouteDashboard />}
-<<<<<<< HEAD
                         {activeTab === "profile-manager" &&
                             currentUser?.is_root && <ProfileManager />}
                         {activeTab === "access-control" &&
                             currentUser?.is_root && <AccessControl />}
-=======
-                        {activeTab === "access-control" && currentUser?.is_root && <AccessControl />}
->>>>>>> 8d9d393 (Access Control Implemented)
                     </div>
                 </div>
             </div>

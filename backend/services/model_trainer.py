@@ -103,7 +103,7 @@ class ModelTrainer:
     
     def _train_worker(self, job: TrainingJob):
         """Background worker that performs actual training"""
-        from app import app, db
+        from app import app, db, Transaction
         
         # Run within Flask application context
         with app.app_context():
@@ -118,34 +118,41 @@ class ModelTrainer:
                 # Import training modules
                 from ml_models.forecasting_models import train_models_for_atm
                 
-                job.message = 'Loading training data from CSV...'
+                job.message = 'Fetching transaction data...'
                 job.progress = 10
                 
-                print(f"[TRAINING] Loading CSV data for ATM {job.atm_id}")
+                print(f"[TRAINING] Fetching transactions for ATM {job.atm_id}")
                 
-                # Load training data from CSV file (original approach)
+                # Get transaction data from database
+                transactions = Transaction.query.filter_by(atm_id=job.atm_id).all()
+                
+                print(f"[TRAINING] Found {len(transactions)} transactions for ATM {job.atm_id}")
+                
+                if len(transactions) < 30:
+                    raise ValueError(f'Insufficient data: {len(transactions)} transactions (need 30+)')
+                
+                job.message = f'Found {len(transactions)} transactions. Preparing dataset...'
+                job.progress = 20
+                
+                # Convert to training format
                 import pandas as pd
-                csv_path = str(get_data_dir() / 'atm_demand_clean.csv')
+                data = pd.DataFrame([{
+                    'atm_id': t.atm_id,
+                    'timestamp': t.timestamp,
+                    'amount': t.amount
+                } for t in transactions])
                 
-                if not os.path.exists(csv_path):
-                    raise ValueError(f'Training data file not found: {csv_path}')
+                print(f"[TRAINING] Converting to daily demand data for ATM {job.atm_id}")
                 
-                # Load and filter data for this ATM
-                df = pd.read_csv(csv_path)
-                df = df[df['atm_id'] == job.atm_id].copy()
-                
-                if len(df) < 7:  # Need at least a week of data
-                    raise ValueError(f'Insufficient training data: {len(df)} days (need 7+)')
-                
-                # Prepare data in expected format
-                daily_demand = df[['date', 'total_demand']].copy()
+                # Group by day and sum
+                data['date'] = pd.to_datetime(data['timestamp']).dt.date
+                daily_demand = data.groupby('date')['amount'].sum().reset_index()
                 daily_demand.columns = ['date', 'demand']
                 daily_demand['date'] = pd.to_datetime(daily_demand['date'])
-                daily_demand = daily_demand.sort_values('date')
                 
-                print(f"[TRAINING] Dataset loaded from CSV: {len(daily_demand)} days of data for ATM {job.atm_id}")
+                print(f"[TRAINING] Dataset prepared: {len(daily_demand)} days of data for ATM {job.atm_id}")
                 
-                job.message = f'Training dataset loaded: {len(daily_demand)} days of data'
+                job.message = f'Training dataset prepared: {len(daily_demand)} days of data'
                 job.progress = 30
                 
                 results = {}

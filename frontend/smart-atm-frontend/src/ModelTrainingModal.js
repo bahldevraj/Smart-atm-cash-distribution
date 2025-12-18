@@ -65,18 +65,6 @@ const ModelTrainingModal = ({ atm, onClose, onTrainingComplete, API_BASE }) => {
             );
             const data = await response.json();
             setStatus(data);
-
-            // Also fetch demand history data
-            const historyResponse = await fetch(
-                `${API_BASE}/atms/${atm.id}/demand-history`
-            );
-            const historyData = await historyResponse.json();
-            setStatus((prevStatus) => ({
-                ...prevStatus,
-                demand_history: historyData.demand_history || [],
-                total_training_records: historyData.total_records || 0,
-                has_training_data: historyData.has_training_data || false,
-            }));
         } catch (err) {
             setError("Failed to fetch model status");
             console.error(err);
@@ -434,75 +422,6 @@ const ModelTrainingModal = ({ atm, onClose, onTrainingComplete, API_BASE }) => {
                             <strong>Recommendation:</strong>{" "}
                             {status.recommendation}
                         </p>
-                    </div>
-                </div>
-
-                {/* Training Data Section */}
-                <div className="bg-green-50 rounded-lg p-6 mb-6">
-                    <div className="flex items-start gap-4">
-                        <Database className="w-6 h-6 text-green-600 mt-1" />
-                        <div className="flex-1">
-                            <h3 className="font-semibold text-lg mb-2">
-                                Training Data
-                            </h3>
-                            <div className="space-y-2 text-sm">
-                                <div className="flex justify-between">
-                                    <span className="text-gray-600">
-                                        Training Records:
-                                    </span>
-                                    <span
-                                        className={`font-medium ${
-                                            (status.total_training_records ||
-                                                0) > 0
-                                                ? "text-green-600"
-                                                : "text-red-600"
-                                        }`}
-                                    >
-                                        {status.total_training_records || 0}{" "}
-                                        records
-                                    </span>
-                                </div>
-                                {status.demand_history &&
-                                    status.demand_history.length > 0 && (
-                                        <div className="mt-3">
-                                            <p className="text-xs text-gray-600 mb-2">
-                                                Recent Training Data:
-                                            </p>
-                                            <div className="bg-white rounded p-2 max-h-32 overflow-y-auto">
-                                                {status.demand_history
-                                                    .slice(-5)
-                                                    .map((record, index) => (
-                                                        <div
-                                                            key={index}
-                                                            className="flex justify-between text-xs py-1 border-b border-gray-100 last:border-b-0"
-                                                        >
-                                                            <span>
-                                                                {
-                                                                    record.formatted_date
-                                                                }
-                                                            </span>
-                                                            <span className="font-medium">
-                                                                {
-                                                                    record.formatted_demand
-                                                                }
-                                                            </span>
-                                                        </div>
-                                                    ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                {(!status.demand_history ||
-                                    status.demand_history.length === 0) && (
-                                    <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded">
-                                        <p className="text-xs text-red-800">
-                                            ⚠ No training data available.
-                                            Generate synthetic data or wait for
-                                            more transactions.
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
                     </div>
                 </div>
 

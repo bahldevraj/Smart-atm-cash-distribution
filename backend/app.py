@@ -23,7 +23,6 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
-<<<<<<< HEAD
 
 # Import centralized path configuration
 from path_config import get_database_uri, get_instance_dir
@@ -33,27 +32,16 @@ app = Flask(__name__)
 # Database configuration - Use centralized path resolution
 default_db_uri = get_database_uri('smart_atm.db')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI') or default_db_uri
-=======
-
-app = Flask(__name__)
-
-# Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI', 'sqlite:///smart_atm.db')
->>>>>>> 8d9d393 (Access Control Implemented)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = False  # Disable SQL logging for performance
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_size': 10,
     'pool_recycle': 3600,
-<<<<<<< HEAD
     'pool_pre_ping': True,
     'connect_args': {
         'timeout': 30,  # Increase timeout for locked database
         'check_same_thread': False  # Allow SQLite to be used across threads
     }
-=======
-    'pool_pre_ping': True
->>>>>>> 8d9d393 (Access Control Implemented)
 }
 
 # Security configuration - Load from environment variables
@@ -70,7 +58,6 @@ app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD', '')
 app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', '')
 
 db = SQLAlchemy(app)
-<<<<<<< HEAD
 
 # Enable WAL mode for SQLite to allow concurrent reads and writes
 from sqlalchemy import event
@@ -92,9 +79,6 @@ CORS(app,
          "allow_headers": ["Content-Type", "Authorization"],
          "supports_credentials": True
      }})
-=======
-CORS(app, supports_credentials=True)
->>>>>>> 8d9d393 (Access Control Implemented)
 
 # Simple in-memory cache for frequently accessed data
 cache = {}
@@ -216,7 +200,6 @@ def token_required(f):
     
     return decorated
 
-<<<<<<< HEAD
 def admin_required(f):
     """Decorator to protect routes requiring admin access"""
     @wraps(f)
@@ -262,9 +245,6 @@ class CustomProfile(db.Model):
             'use_case': self.use_case
         }
 
-=======
-# Database Models
->>>>>>> 8d9d393 (Access Control Implemented)
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=True)
@@ -411,7 +391,6 @@ class ATM(db.Model):
             'capacity': self.capacity,
             'current_balance': self.current_balance,
             'daily_avg_demand': self.daily_avg_demand,
-<<<<<<< HEAD
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'transaction_count': transaction_count,
             'mape': mape,
@@ -422,9 +401,6 @@ class ATM(db.Model):
             'detected_profile': detected_profile,
             'profile_changed': profile_changed,
             'last_trained_at': self.last_trained_at.isoformat() if self.last_trained_at else None
-=======
-            'created_at': self.created_at.isoformat() if self.created_at else None
->>>>>>> 8d9d393 (Access Control Implemented)
         }
 
 class TransactionSection(db.Model):
@@ -923,19 +899,9 @@ def delete_vault(vault_id):
 
 @app.route('/api/atms', methods=['GET'])
 def get_atms():
-<<<<<<< HEAD
     # Disable caching for ATMs to ensure profile changes are reflected immediately
     atms = ATM.query.all()
     result = [atm.to_dict() for atm in atms]
-=======
-    cached = get_cache('atms')
-    if cached:
-        return jsonify(cached)
-    
-    atms = ATM.query.all()
-    result = [atm.to_dict() for atm in atms]
-    set_cache('atms', result)
->>>>>>> 8d9d393 (Access Control Implemented)
     return jsonify(result)
 
 @app.route('/api/atms', methods=['POST'])
@@ -987,7 +953,6 @@ def update_atm(atm_id):
 
 @app.route('/api/atms/<int:atm_id>', methods=['DELETE', 'OPTIONS'])
 def delete_atm(atm_id):
-<<<<<<< HEAD
     if request.method == 'OPTIONS':
         return '', 200
     try:
@@ -1004,13 +969,6 @@ def delete_atm(atm_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
-=======
-    atm = ATM.query.get_or_404(atm_id)
-    db.session.delete(atm)
-    db.session.commit()
-    clear_cache()
-    return '', 204
->>>>>>> 8d9d393 (Access Control Implemented)
 
 @app.route('/api/optimize', methods=['POST'])
 def optimize_allocation():
@@ -1696,23 +1654,10 @@ def generate_routes():
             return jsonify({'error': 'Vault not found'}), 404
         
         vault_data = vault.to_dict()
-<<<<<<< HEAD
         
         # Check if vault has coordinates
         if not vault_data.get('latitude') or not vault_data.get('longitude'):
             return jsonify({'error': 'Vault coordinates not set. Please update vault with latitude and longitude.'}), 400
-=======
-        vault_result = db.session.execute(text("""
-            SELECT latitude, longitude, address FROM vault WHERE id = :id
-        """), {'id': vault_id}).fetchone()
-        
-        if vault_result and vault_result[0]:
-            vault_data['latitude'] = vault_result[0]
-            vault_data['longitude'] = vault_result[1]
-            vault_data['address'] = vault_result[2]
-        else:
-            return jsonify({'error': 'Vault coordinates not found'}), 400
->>>>>>> 8d9d393 (Access Control Implemented)
         
         # Get vehicles
         vehicles = []
@@ -1738,19 +1683,8 @@ def generate_routes():
             all_atms = ATM.query.all()
             all_atms_data = [atm.to_dict() for atm in all_atms]
             
-<<<<<<< HEAD
             # Filter ATMs with coordinates
             all_atms_data = [atm for atm in all_atms_data if atm.get('latitude') and atm.get('longitude')]
-=======
-            # Add coordinates
-            for atm_data in all_atms_data:
-                atm_coords = db.session.execute(text("""
-                    SELECT latitude, longitude FROM atm WHERE id = :id
-                """), {'id': atm_data['id']}).fetchone()
-                if atm_coords:
-                    atm_data['latitude'] = atm_coords[0]
-                    atm_data['longitude'] = atm_coords[1]
->>>>>>> 8d9d393 (Access Control Implemented)
             
             atms_to_visit = prediction_service.get_atms_needing_refill(
                 all_atms_data, 
@@ -1763,19 +1697,9 @@ def generate_routes():
                 atm = ATM.query.get(atm_id)
                 if atm:
                     atm_data = atm.to_dict()
-<<<<<<< HEAD
                     
                     # Check if ATM has coordinates
                     if atm_data.get('latitude') and atm_data.get('longitude'):
-=======
-                    atm_coords = db.session.execute(text("""
-                        SELECT latitude, longitude FROM atm WHERE id = :id
-                    """), {'id': atm_id}).fetchone()
-                    
-                    if atm_coords and atm_coords[0]:
-                        atm_data['latitude'] = atm_coords[0]
-                        atm_data['longitude'] = atm_coords[1]
->>>>>>> 8d9d393 (Access Control Implemented)
                         atm_data['required_amount'] = atm_data['capacity'] - atm_data['current_balance']
                         atms_to_visit.append(atm_data)
         
@@ -1953,7 +1877,6 @@ def execute_route(route_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-<<<<<<< HEAD
 @app.route('/api/atms/<int:atm_id>/model-status', methods=['GET'])
 def get_atm_model_status(atm_id):
     """Check if ATM has trained model and get prediction method info"""
@@ -2254,40 +2177,6 @@ def get_atm_data_status(atm_id):
             }.get(recommendation, '')
         })
         
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/atms/<int:atm_id>/demand-history', methods=['GET'])
-def get_atm_demand_history(atm_id):
-    """Get demand history data for an ATM (used for training data display)"""
-    try:
-        # Check if ATM exists
-        atm = ATM.query.get(atm_id)
-        if not atm:
-            return jsonify({'error': 'ATM not found'}), 404
-
-        # Get demand history records
-        history_records = DemandHistory.query.filter_by(atm_id=atm_id).order_by(DemandHistory.date).all()
-
-        # Format for frontend
-        demand_data = []
-        for record in history_records:
-            demand_data.append({
-                'date': record.date.isoformat(),
-                'demand': record.demand,
-                'formatted_date': record.date.strftime('%Y-%m-%d'),
-                'formatted_demand': f"${record.demand:,.2f}"
-            })
-
-        return jsonify({
-            'atm_id': atm_id,
-            'atm_name': atm.name,
-            'total_records': len(demand_data),
-            'demand_history': demand_data,
-            'has_training_data': len(demand_data) > 0
-        })
-
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -2626,8 +2515,6 @@ def clear_profile_override(user, atm_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-=======
->>>>>>> 8d9d393 (Access Control Implemented)
 
 if __name__ == '__main__':
     create_tables()   # Run DB setup when app starts
