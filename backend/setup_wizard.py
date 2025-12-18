@@ -93,7 +93,8 @@ MAIL_PASSWORD={mail_password}
 MAIL_DEFAULT_SENDER={mail_sender}
 
 # Database Configuration
-DATABASE_URI=sqlite:///smart_atm.db
+# Leave empty to use default: sqlite:///instance/smart_atm.db
+DATABASE_URI=
 """
     
     with open('.env', 'w') as f:

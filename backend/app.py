@@ -24,16 +24,24 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# Import centralized path configuration
+from path_config import get_database_uri, get_instance_dir
+
 app = Flask(__name__)
 
-# Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI', 'sqlite:///smart_atm.db')
+# Database configuration - Use centralized path resolution
+default_db_uri = get_database_uri('smart_atm.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI') or default_db_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = False  # Disable SQL logging for performance
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_size': 10,
     'pool_recycle': 3600,
-    'pool_pre_ping': True
+    'pool_pre_ping': True,
+    'connect_args': {
+        'timeout': 30,  # Increase timeout for locked database
+        'check_same_thread': False  # Allow SQLite to be used across threads
+    }
 }
 
 # Security configuration - Load from environment variables
@@ -50,7 +58,27 @@ app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD', '')
 app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', '')
 
 db = SQLAlchemy(app)
-CORS(app, supports_credentials=True)
+
+# Enable WAL mode for SQLite to allow concurrent reads and writes
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
+
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_conn, connection_record):
+    """Set SQLite to use WAL mode for better concurrency"""
+    if 'sqlite' in str(dbapi_conn):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
+        cursor.close()
+
+CORS(app, 
+     resources={r"/api/*": {
+         "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],
+         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+         "allow_headers": ["Content-Type", "Authorization"],
+         "supports_credentials": True
+     }})
 
 # Simple in-memory cache for frequently accessed data
 cache = {}
@@ -172,7 +200,51 @@ def token_required(f):
     
     return decorated
 
+def admin_required(f):
+    """Decorator to protect routes requiring admin access"""
+    @wraps(f)
+    def decorated(user, *args, **kwargs):
+        if not user.is_root:
+            return jsonify({'error': 'Admin access required'}), 403
+        return f(user, *args, **kwargs)
+    return decorated
+
 # Database Models
+class CustomProfile(db.Model):
+    """Custom profile definitions created by admins"""
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)
+    is_preset = db.Column(db.Boolean, default=False)  # True for built-in profiles
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Profile parameters stored as JSON
+    parameters = db.Column(db.JSON, nullable=False)
+    # Example: {
+    #   'base_volume': 750,
+    #   'peak_hours': [11, 12, 13, 18, 19, 20],
+    #   'weekend_multiplier': 1.4,
+    #   'seasonality_factor': 1.2,
+    #   'withdrawal_range': [1500, 10000]
+    # }
+    
+    description = db.Column(db.Text)
+    use_case = db.Column(db.String(200))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'is_preset': self.is_preset,
+            'created_by': self.created_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'parameters': self.parameters,
+            'description': self.description,
+            'use_case': self.use_case
+        }
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=True)
@@ -218,6 +290,8 @@ class Vault(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     location = db.Column(db.String(200), nullable=False)
+    latitude = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
     capacity = db.Column(db.Float, nullable=False)
     current_balance = db.Column(db.Float, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -227,6 +301,8 @@ class Vault(db.Model):
             'id': self.id,
             'name': self.name,
             'location': self.location,
+            'latitude': self.latitude,
+            'longitude': self.longitude,
             'capacity': self.capacity,
             'current_balance': self.current_balance,
             'created_at': self.created_at.isoformat() if self.created_at else None
@@ -236,20 +312,95 @@ class ATM(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     location = db.Column(db.String(200), nullable=False)
+    latitude = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
     capacity = db.Column(db.Float, nullable=False)
     current_balance = db.Column(db.Float, nullable=False)
     daily_avg_demand = db.Column(db.Float, default=0.0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
+    # Profile override fields
+    profile_override = db.Column(db.String(50), nullable=True)  # Profile name
+    profile_override_type = db.Column(db.String(10), nullable=True)  # 'preset' or 'custom'
+    profile_override_id = db.Column(db.Integer, db.ForeignKey('custom_profile.id'), nullable=True)
+    
+    # Track last trained profile to detect when retraining is needed
+    last_trained_profile = db.Column(db.String(50), nullable=True)
+    last_trained_at = db.Column(db.DateTime, nullable=True)
+    
     def to_dict(self):
+        # Get transaction count for this ATM
+        transaction_count = Transaction.query.filter_by(atm_id=self.id).count()
+        
+        # Detect which profile this ATM is using
+        detected_profile = None
+        try:
+            from services.synthetic_data_generator import SyntheticTransactionGenerator
+            manual_overrides = SyntheticTransactionGenerator.MANUAL_PROFILE_OVERRIDES
+            location_profiles = SyntheticTransactionGenerator.LOCATION_PROFILES
+            detected_profile = _detect_atm_profile(self, manual_overrides, location_profiles)
+        except Exception as e:
+            print(f"Error detecting profile for ATM {self.id}: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Get best MAPE from model metrics CSV (lowest between ARIMA and LSTM)
+        mape = None
+        best_model = None
+        profile_changed = False
+        
+        # Check if profile has changed since last training
+        if self.last_trained_profile and detected_profile:
+            profile_changed = (self.last_trained_profile != detected_profile)
+        
+        try:
+            import os
+            import pandas as pd
+            metrics_path = os.path.join('ml_models', 'saved_models', f'model_metrics_atm_{self.id}.csv')
+            if os.path.exists(metrics_path):
+                df = pd.read_csv(metrics_path)
+                if not df.empty:
+                    # Get the most recent ARIMA and LSTM models
+                    arima_metrics = df[df['model_type'].str.contains('ARIMA', na=False)]
+                    lstm_metrics = df[df['model_type'].str.contains('LSTM', na=False)]
+                    
+                    arima_mape = float(arima_metrics.iloc[-1]['mape']) if not arima_metrics.empty else float('inf')
+                    lstm_mape = float(lstm_metrics.iloc[-1]['mape']) if not lstm_metrics.empty else float('inf')
+                    
+                    # Choose the best (lowest) MAPE
+                    if arima_mape < lstm_mape:
+                        mape = arima_mape
+                        best_model = 'ARIMA'
+                    elif lstm_mape < float('inf'):
+                        mape = lstm_mape
+                        best_model = 'LSTM'
+                        
+                    # Mark as outdated if profile changed
+                    if profile_changed:
+                        mape = 'outdated'
+                        best_model = f'{best_model} (Outdated)'
+        except Exception as e:
+            print(f"Could not load MAPE for ATM {self.id}: {e}")
+        
         return {
             'id': self.id,
             'name': self.name,
             'location': self.location,
+            'latitude': self.latitude,
+            'longitude': self.longitude,
             'capacity': self.capacity,
             'current_balance': self.current_balance,
             'daily_avg_demand': self.daily_avg_demand,
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'transaction_count': transaction_count,
+            'mape': mape,
+            'best_model': best_model,
+            'profile_override': self.profile_override,
+            'profile_override_type': self.profile_override_type,
+            'profile_override_id': self.profile_override_id,
+            'detected_profile': detected_profile,
+            'profile_changed': profile_changed,
+            'last_trained_at': self.last_trained_at.isoformat() if self.last_trained_at else None
         }
 
 class TransactionSection(db.Model):
@@ -281,8 +432,8 @@ class Transaction(db.Model):
     section_id = db.Column(db.Integer, db.ForeignKey('transaction_section.id'), nullable=True)
     notes = db.Column(db.String(500))  # Optional notes for imported data
     
-    vault = db.relationship('Vault', backref=db.backref('transactions', lazy=True))
-    atm = db.relationship('ATM', backref=db.backref('transactions', lazy=True))
+    vault = db.relationship('Vault', backref=db.backref('transactions', lazy=True, cascade='all, delete-orphan'))
+    atm = db.relationship('ATM', backref=db.backref('transactions', lazy=True, cascade='all, delete-orphan'))
     section = db.relationship('TransactionSection', backref=db.backref('transactions', lazy=True))
     
     def to_dict(self):
@@ -710,6 +861,8 @@ def create_vault():
     vault = Vault(
         name=data['name'],
         location=data['location'],
+        latitude=data.get('latitude'),
+        longitude=data.get('longitude'),
         capacity=float(data['capacity']),
         current_balance=float(data['current_balance'])
     )
@@ -725,6 +878,10 @@ def update_vault(vault_id):
     
     vault.name = data.get('name', vault.name)
     vault.location = data.get('location', vault.location)
+    if 'latitude' in data:
+        vault.latitude = data.get('latitude')
+    if 'longitude' in data:
+        vault.longitude = data.get('longitude')
     vault.capacity = float(data.get('capacity', vault.capacity))
     vault.current_balance = float(data.get('current_balance', vault.current_balance))
     
@@ -742,13 +899,9 @@ def delete_vault(vault_id):
 
 @app.route('/api/atms', methods=['GET'])
 def get_atms():
-    cached = get_cache('atms')
-    if cached:
-        return jsonify(cached)
-    
+    # Disable caching for ATMs to ensure profile changes are reflected immediately
     atms = ATM.query.all()
     result = [atm.to_dict() for atm in atms]
-    set_cache('atms', result)
     return jsonify(result)
 
 @app.route('/api/atms', methods=['POST'])
@@ -757,9 +910,14 @@ def create_atm():
     atm = ATM(
         name=data['name'],
         location=data['location'],
+        latitude=data.get('latitude'),
+        longitude=data.get('longitude'),
         capacity=float(data['capacity']),
         current_balance=float(data['current_balance']),
-        daily_avg_demand=float(data.get('daily_avg_demand', 0))
+        daily_avg_demand=float(data.get('daily_avg_demand', 0)),
+        profile_override=data.get('profile_override'),
+        profile_override_type=data.get('profile_override_type'),
+        profile_override_id=data.get('profile_override_id')
     )
     db.session.add(atm)
     db.session.commit()
@@ -773,21 +931,44 @@ def update_atm(atm_id):
     
     atm.name = data.get('name', atm.name)
     atm.location = data.get('location', atm.location)
+    if 'latitude' in data:
+        atm.latitude = data.get('latitude')
+    if 'longitude' in data:
+        atm.longitude = data.get('longitude')
     atm.capacity = float(data.get('capacity', atm.capacity))
     atm.current_balance = float(data.get('current_balance', atm.current_balance))
     atm.daily_avg_demand = float(data.get('daily_avg_demand', atm.daily_avg_demand))
+    
+    # Update profile override fields if provided
+    if 'profile_override' in data:
+        atm.profile_override = data.get('profile_override')
+    if 'profile_override_type' in data:
+        atm.profile_override_type = data.get('profile_override_type')
+    if 'profile_override_id' in data:
+        atm.profile_override_id = data.get('profile_override_id')
     
     db.session.commit()
     clear_cache()
     return jsonify(atm.to_dict())
 
-@app.route('/api/atms/<int:atm_id>', methods=['DELETE'])
+@app.route('/api/atms/<int:atm_id>', methods=['DELETE', 'OPTIONS'])
 def delete_atm(atm_id):
-    atm = ATM.query.get_or_404(atm_id)
-    db.session.delete(atm)
-    db.session.commit()
-    clear_cache()
-    return '', 204
+    if request.method == 'OPTIONS':
+        return '', 200
+    try:
+        atm = ATM.query.get_or_404(atm_id)
+        
+        # Delete all transactions associated with this ATM first
+        Transaction.query.filter_by(atm_id=atm_id).delete()
+        
+        # Now delete the ATM
+        db.session.delete(atm)
+        db.session.commit()
+        clear_cache()
+        return jsonify({"message": "ATM deleted successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/optimize', methods=['POST'])
 def optimize_allocation():
@@ -1473,16 +1654,10 @@ def generate_routes():
             return jsonify({'error': 'Vault not found'}), 404
         
         vault_data = vault.to_dict()
-        vault_result = db.session.execute(text("""
-            SELECT latitude, longitude, address FROM vault WHERE id = :id
-        """), {'id': vault_id}).fetchone()
         
-        if vault_result and vault_result[0]:
-            vault_data['latitude'] = vault_result[0]
-            vault_data['longitude'] = vault_result[1]
-            vault_data['address'] = vault_result[2]
-        else:
-            return jsonify({'error': 'Vault coordinates not found'}), 400
+        # Check if vault has coordinates
+        if not vault_data.get('latitude') or not vault_data.get('longitude'):
+            return jsonify({'error': 'Vault coordinates not set. Please update vault with latitude and longitude.'}), 400
         
         # Get vehicles
         vehicles = []
@@ -1508,14 +1683,8 @@ def generate_routes():
             all_atms = ATM.query.all()
             all_atms_data = [atm.to_dict() for atm in all_atms]
             
-            # Add coordinates
-            for atm_data in all_atms_data:
-                atm_coords = db.session.execute(text("""
-                    SELECT latitude, longitude FROM atm WHERE id = :id
-                """), {'id': atm_data['id']}).fetchone()
-                if atm_coords:
-                    atm_data['latitude'] = atm_coords[0]
-                    atm_data['longitude'] = atm_coords[1]
+            # Filter ATMs with coordinates
+            all_atms_data = [atm for atm in all_atms_data if atm.get('latitude') and atm.get('longitude')]
             
             atms_to_visit = prediction_service.get_atms_needing_refill(
                 all_atms_data, 
@@ -1528,13 +1697,9 @@ def generate_routes():
                 atm = ATM.query.get(atm_id)
                 if atm:
                     atm_data = atm.to_dict()
-                    atm_coords = db.session.execute(text("""
-                        SELECT latitude, longitude FROM atm WHERE id = :id
-                    """), {'id': atm_id}).fetchone()
                     
-                    if atm_coords and atm_coords[0]:
-                        atm_data['latitude'] = atm_coords[0]
-                        atm_data['longitude'] = atm_coords[1]
+                    # Check if ATM has coordinates
+                    if atm_data.get('latitude') and atm_data.get('longitude'):
                         atm_data['required_amount'] = atm_data['capacity'] - atm_data['current_balance']
                         atms_to_visit.append(atm_data)
         
@@ -1712,6 +1877,644 @@ def execute_route(route_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/atms/<int:atm_id>/model-status', methods=['GET'])
+def get_atm_model_status(atm_id):
+    """Check if ATM has trained model and get prediction method info"""
+    try:
+        from services.fallback_predictor import FallbackPredictor
+        
+        predictor = FallbackPredictor(atm_id, db.session)
+        metadata = predictor.get_prediction_metadata()
+        
+        # Get transaction count for training readiness
+        transaction_count = Transaction.query.filter_by(atm_id=atm_id).count()
+        
+        # Get ATM details
+        atm = ATM.query.get(atm_id)
+        
+        return jsonify({
+            'atm_id': atm_id,
+            'atm_name': atm.name if atm else 'Unknown',
+            'has_trained_model': predictor.has_trained_model(),
+            'prediction_method': metadata,
+            'transaction_count': transaction_count,
+            'training_ready': transaction_count >= 100,  # Minimum for decent model
+            'training_recommended': transaction_count >= 30,  # Minimum viable
+            'recommendation': get_training_recommendation(transaction_count, predictor.has_trained_model())
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/atms/<int:atm_id>/metrics', methods=['GET'])
+def get_atm_metrics(atm_id):
+    """Get all model metrics for both ARIMA and LSTM models"""
+    try:
+        import pandas as pd
+        import os
+        
+        # Path to metrics CSV file
+        metrics_file = os.path.join('ml_models', 'saved_models', f'model_metrics_atm_{atm_id}.csv')
+        
+        if not os.path.exists(metrics_file):
+            return jsonify({'error': 'No metrics found for this ATM'}), 404
+        
+        # Read the CSV file
+        df = pd.read_csv(metrics_file)
+        
+        # Get ARIMA metrics (most recent)
+        arima_df = df[df['model_type'].str.contains('ARIMA', case=False, na=False)]
+        arima_metrics = None
+        if not arima_df.empty:
+            latest_arima = arima_df.iloc[-1]
+            arima_metrics = {
+                'mae': float(latest_arima.get('mae', 0)),
+                'rmse': float(latest_arima.get('rmse', 0)),
+                'mape': float(latest_arima.get('mape', 0)),
+                'training_days': int(latest_arima.get('training_days', 0)) if pd.notna(latest_arima.get('training_days')) else None,
+                'trained_date': str(latest_arima.get('trained_date', '')) if pd.notna(latest_arima.get('trained_date')) else None
+            }
+        
+        # Get LSTM metrics (most recent)
+        lstm_df = df[df['model_type'].str.contains('LSTM', case=False, na=False)]
+        lstm_metrics = None
+        if not lstm_df.empty:
+            latest_lstm = lstm_df.iloc[-1]
+            lstm_metrics = {
+                'mae': float(latest_lstm.get('mae', 0)),
+                'rmse': float(latest_lstm.get('rmse', 0)),
+                'mape': float(latest_lstm.get('mape', 0)),
+                'training_days': int(latest_lstm.get('training_days', 0)) if pd.notna(latest_lstm.get('training_days')) else None,
+                'trained_date': str(latest_lstm.get('trained_date', '')) if pd.notna(latest_lstm.get('trained_date')) else None
+            }
+        
+        return jsonify({
+            'atm_id': atm_id,
+            'arima': arima_metrics,
+            'lstm': lstm_metrics
+        })
+        
+    except Exception as e:
+        print(f"Error fetching metrics: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/atms/<int:atm_id>/train-model', methods=['POST'])
+def train_atm_model(atm_id):
+    """Trigger model training for a specific ATM (requires sufficient data)"""
+    try:
+        from services.model_trainer import get_trainer
+        
+        # Validate ATM exists
+        atm = ATM.query.get(atm_id)
+        if not atm:
+            return jsonify({'error': f'ATM {atm_id} not found'}), 404
+        
+        transaction_count = Transaction.query.filter_by(atm_id=atm_id).count()
+        
+        if transaction_count < 30:
+            return jsonify({
+                'error': 'Insufficient data for training',
+                'transaction_count': transaction_count,
+                'required': 30,
+                'message': f'Need at least 30 transactions. Current: {transaction_count}'
+            }), 400
+        
+        # Get request parameters
+        data = request.get_json() or {}
+        models = data.get('models', ['arima', 'lstm'])  # Default: train both
+        
+        # Start training job
+        trainer = get_trainer()
+        job = trainer.start_training(atm_id, models)
+        
+        return jsonify({
+            'message': 'Model training started',
+            'job': job.to_dict(),
+            'status_url': f'/api/atms/{atm_id}/training-status'
+        }), 202  # 202 Accepted
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/atms/<int:atm_id>/training-status', methods=['GET'])
+def get_training_status(atm_id):
+    """Get status of model training job for an ATM"""
+    try:
+        from services.model_trainer import get_trainer
+        
+        trainer = get_trainer()
+        job = trainer.get_job_status(atm_id)
+        
+        if not job:
+            print(f"[API] No training job found for ATM {atm_id}")
+            return jsonify({
+                'atm_id': atm_id,
+                'status': 'no_job',
+                'message': 'No training job found for this ATM'
+            }), 404
+        
+        job_dict = job.to_dict()
+        print(f"[API] Training status for ATM {atm_id}: {job_dict['status']} - Progress: {job_dict['progress']}% - Message: {job_dict['message']}")
+        return jsonify(job_dict)
+    except Exception as e:
+        print(f"[API ERROR] Error getting training status for ATM {atm_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/atms/<int:atm_id>/generate-synthetic-data', methods=['POST'])
+def generate_synthetic_data(atm_id):
+    """
+    Generate synthetic transaction history for training ATMs without real data
+    Uses location-aware patterns to create realistic, unique transaction histories
+    """
+    try:
+        from services.synthetic_data_generator import generate_for_atm
+        
+        # Get ATM details
+        atm = ATM.query.get(atm_id)
+        if not atm:
+            return jsonify({'error': 'ATM not found'}), 404
+        
+        # Check if ATM already has significant transaction data
+        existing_count = Transaction.query.filter_by(atm_id=atm_id).count()
+        
+        data = request.get_json() or {}
+        days = data.get('days', 90)  # Default: 90 days of history
+        force = data.get('force', False)  # Force generation even if data exists
+        
+        if existing_count > 50 and not force:
+            return jsonify({
+                'error': 'ATM already has transaction data',
+                'existing_transactions': existing_count,
+                'message': 'Use force=true to generate anyway (this will add to existing data)'
+            }), 400
+        
+        # Generate synthetic transactions
+        transactions, stats = generate_for_atm(
+            atm_id=atm.id,
+            atm_name=atm.name,
+            location=atm.location,
+            days=days
+        )
+        
+        # Get or create a default vault for synthetic transactions
+        default_vault = Vault.query.first()
+        if not default_vault:
+            # Create a default vault if none exists
+            default_vault = Vault(
+                name='Default Vault',
+                location='Central Storage',
+                capacity=10000000,
+                current_balance=10000000
+            )
+            db.session.add(default_vault)
+            db.session.commit()
+        
+        # Save transactions to database
+        saved_count = 0
+        for tx_data in transactions:
+            transaction = Transaction(
+                vault_id=default_vault.id,  # Use default vault for synthetic data
+                atm_id=atm.id,
+                amount=tx_data['amount'],
+                transaction_type=tx_data.get('transaction_type', 'withdrawal'),
+                timestamp=datetime.fromisoformat(tx_data['timestamp'])
+            )
+            db.session.add(transaction)
+            saved_count += 1
+            
+            # Commit in batches for performance
+            if saved_count % 100 == 0:
+                db.session.commit()
+        
+        # Final commit
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'atm_id': atm_id,
+            'atm_name': atm.name,
+            'generated_transactions': len(transactions),
+            'days_of_history': days,
+            'statistics': stats,
+            'message': f'Successfully generated {len(transactions)} synthetic transactions. ATM is now ready for model training!'
+        })
+        
+    except ImportError:
+        return jsonify({
+            'error': 'Synthetic data generator not available',
+            'message': 'Please ensure synthetic_data_generator.py is in the services folder'
+        }), 500
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/atms/<int:atm_id>/data-status', methods=['GET'])
+def get_atm_data_status(atm_id):
+    """
+    Check if ATM has sufficient data for training or needs synthetic generation
+    """
+    try:
+        atm = ATM.query.get(atm_id)
+        if not atm:
+            return jsonify({'error': 'ATM not found'}), 404
+        
+        # Count transactions
+        total_transactions = Transaction.query.filter_by(atm_id=atm_id).count()
+        
+        # Check for recent transactions (last 30 days)
+        thirty_days_ago = datetime.now() - timedelta(days=30)
+        recent_transactions = Transaction.query.filter(
+            Transaction.atm_id == atm_id,
+            Transaction.timestamp >= thirty_days_ago
+        ).count()
+        
+        # Get date range of transactions
+        first_tx = Transaction.query.filter_by(atm_id=atm_id).order_by(Transaction.timestamp.asc()).first()
+        last_tx = Transaction.query.filter_by(atm_id=atm_id).order_by(Transaction.timestamp.desc()).first()
+        
+        date_range_days = 0
+        if first_tx and last_tx:
+            date_range_days = (last_tx.timestamp - first_tx.timestamp).days
+        
+        # Determine data quality and recommendations
+        data_quality = 'none'
+        recommendation = 'generate_synthetic'
+        ready_for_training = False
+        
+        if total_transactions >= 500:
+            data_quality = 'excellent'
+            recommendation = 'ready_for_training'
+            ready_for_training = True
+        elif total_transactions >= 100:
+            data_quality = 'good'
+            recommendation = 'ready_for_training'
+            ready_for_training = True
+        elif total_transactions >= 30:
+            data_quality = 'minimal'
+            recommendation = 'collect_more_or_generate'
+            ready_for_training = True
+        elif total_transactions > 0:
+            data_quality = 'insufficient'
+            recommendation = 'collect_more_or_generate'
+        
+        return jsonify({
+            'atm_id': atm_id,
+            'atm_name': atm.name,
+            'location': atm.location,
+            'total_transactions': total_transactions,
+            'recent_transactions_30d': recent_transactions,
+            'data_range_days': date_range_days,
+            'first_transaction': first_tx.timestamp.isoformat() if first_tx else None,
+            'last_transaction': last_tx.timestamp.isoformat() if last_tx else None,
+            'data_quality': data_quality,
+            'recommendation': recommendation,
+            'ready_for_training': ready_for_training,
+            'messages': {
+                'generate_synthetic': 'No data available. Generate synthetic transaction history to enable training.',
+                'collect_more_or_generate': 'Limited data available. Either collect more real transactions or generate synthetic data.',
+                'ready_for_training': 'Sufficient data available for model training!'
+            }.get(recommendation, '')
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def get_training_recommendation(transaction_count: int, has_model: bool) -> str:
+    """Generate training recommendation message"""
+    if has_model:
+        return "Model trained and active"
+    elif transaction_count >= 100:
+        return "Ready for training! You have enough data for a high-quality model."
+    elif transaction_count >= 30:
+        return "Minimum data collected. Training possible but more data recommended for better accuracy."
+    elif transaction_count > 0:
+        return f"Collecting data... ({transaction_count}/30 transactions). Continue normal operations."
+    else:
+        return "No transaction data yet. Start using this ATM to collect data."
+
+
+# ==================== PROFILE MANAGEMENT API (Admin Only) ====================
+
+def _detect_atm_profile(atm, manual_overrides, location_profiles):
+    """Detect which profile an ATM uses (matches SyntheticTransactionGenerator logic)"""
+    # 1. Check explicit profile override
+    if atm.profile_override and atm.profile_override_type == 'preset':
+        return atm.profile_override
+    elif atm.profile_override and atm.profile_override_type == 'custom':
+        # Return the custom profile name (not None)
+        return atm.profile_override
+    
+    # 2. Check manual overrides by ATM ID
+    if atm.id in manual_overrides:
+        return manual_overrides[atm.id]
+    
+    # 3. Auto-detect from location/name (same logic as SyntheticTransactionGenerator)
+    location_text = (atm.name + ' ' + atm.location).lower()
+    location_normalized = location_text.replace(' ', '_')
+    
+    # Check profiles in order of length (longest first to avoid partial matches)
+    sorted_profiles = sorted(location_profiles.keys(), key=lambda x: len(x), reverse=True)
+    
+    for profile_type in sorted_profiles:
+        profile_with_space = profile_type.replace('_', ' ')
+        if profile_type in location_text or profile_type in location_normalized or profile_with_space in location_text:
+            return profile_type
+    
+    return None  # Uses default profile
+
+@app.route('/api/profiles/presets', methods=['GET'])
+@token_required
+def get_preset_profiles(user):
+    """Get all preset profiles from SyntheticTransactionGenerator"""
+    try:
+        from services.synthetic_data_generator import SyntheticTransactionGenerator
+        
+        # Get all ATMs to count usage
+        all_atms = ATM.query.all()
+        manual_overrides = SyntheticTransactionGenerator.MANUAL_PROFILE_OVERRIDES
+        location_profiles = SyntheticTransactionGenerator.LOCATION_PROFILES
+        
+        profiles_data = []
+        for name, params in location_profiles.items():
+            # Calculate estimated performance metrics
+            weekend_mult = params['weekend_multiplier']
+            seasonality = params['seasonality_factor']
+            base_cv = 20
+            weekend_impact = abs(weekend_mult - 1.0) * 30
+            season_impact = abs(seasonality - 1.0) * 20
+            estimated_cv = base_cv + weekend_impact + season_impact
+            estimated_mape_min = 8 + estimated_cv * 0.2
+            estimated_mape_max = 12 + estimated_cv * 0.3
+            
+            # Get ATMs using this profile
+            using_atms = [atm for atm in all_atms if _detect_atm_profile(atm, manual_overrides, location_profiles) == name]
+            usage_count = len(using_atms)
+            atm_names = [atm.name for atm in using_atms]
+            
+            profiles_data.append({
+                'name': name,
+                'is_preset': True,
+                'parameters': params,
+                'estimated_cv': round(estimated_cv, 1),
+                'estimated_mape': f"{round(estimated_mape_min, 0)}-{round(estimated_mape_max, 0)}%",
+                'usage_count': usage_count,
+                'atm_names': atm_names
+            })
+        
+        return jsonify(profiles_data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/profiles', methods=['GET'])
+@token_required
+def get_all_profiles(user):
+    """Get all profiles (preset + custom)"""
+    try:
+        from services.synthetic_data_generator import SyntheticTransactionGenerator
+        
+        # Get all ATMs to count usage
+        all_atms = ATM.query.all()
+        manual_overrides = SyntheticTransactionGenerator.MANUAL_PROFILE_OVERRIDES
+        location_profiles = SyntheticTransactionGenerator.LOCATION_PROFILES
+        
+        profiles_data = []
+        
+        # Add preset profiles
+        for name, params in location_profiles.items():
+            weekend_mult = params['weekend_multiplier']
+            seasonality = params['seasonality_factor']
+            estimated_cv = 20 + abs(weekend_mult - 1.0) * 30 + abs(seasonality - 1.0) * 20
+            
+            # Get ATMs using this profile
+            using_atms = [atm for atm in all_atms if _detect_atm_profile(atm, manual_overrides, location_profiles) == name]
+            usage_count = len(using_atms)
+            atm_names = [atm.name for atm in using_atms]
+            
+            profiles_data.append({
+                'id': None,
+                'name': name,
+                'is_preset': True,
+                'parameters': params,
+                'estimated_cv': round(estimated_cv, 1),
+                'usage_count': usage_count,
+                'atm_names': atm_names,
+                'created_at': None
+            })
+        
+        # Add custom profiles
+        custom_profiles = CustomProfile.query.all()
+        for profile in custom_profiles:
+            params = profile.parameters
+            weekend_mult = params.get('weekend_multiplier', 1.0)
+            seasonality = params.get('seasonality_factor', 1.0)
+            estimated_cv = 20 + abs(weekend_mult - 1.0) * 30 + abs(seasonality - 1.0) * 20
+            
+            # Get ATMs using this custom profile
+            using_atms = ATM.query.filter_by(profile_override_id=profile.id, profile_override_type='custom').all()
+            usage_count = len(using_atms)
+            atm_names = [atm.name for atm in using_atms]
+            
+            profiles_data.append({
+                'id': profile.id,
+                'name': profile.name,
+                'is_preset': False,
+                'parameters': params,
+                'description': profile.description,
+                'use_case': profile.use_case,
+                'estimated_cv': round(estimated_cv, 1),
+                'usage_count': usage_count,
+                'atm_names': atm_names,
+                'created_at': profile.created_at.isoformat() if profile.created_at else None
+            })
+        
+        return jsonify(profiles_data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/profiles', methods=['POST'])
+@token_required
+@admin_required
+def create_custom_profile(user):
+    """Create a new custom profile (admin only)"""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        if not data.get('name'):
+            return jsonify({'error': 'Profile name is required'}), 400
+        
+        if not data.get('parameters'):
+            return jsonify({'error': 'Profile parameters are required'}), 400
+        
+        # Check if name already exists
+        existing_preset = any(data['name'] == name for name in ['airport', 'hospital', 'railway_station', 'business_district', 'downtown', 'residential', 'bus_terminal', 'industrial', 'community', 'sports_complex', 'shopping_mall', 'university_campus', 'tech_park', 'industrial_balanced'])
+        if existing_preset:
+            return jsonify({'error': 'Cannot override preset profile names'}), 400
+        
+        existing_custom = CustomProfile.query.filter_by(name=data['name']).first()
+        if existing_custom:
+            return jsonify({'error': 'Profile name already exists'}), 400
+        
+        # Validate parameters
+        params = data['parameters']
+        required_params = ['base_volume', 'peak_hours', 'weekend_multiplier', 'seasonality_factor', 'withdrawal_range']
+        for param in required_params:
+            if param not in params:
+                return jsonify({'error': f'Missing required parameter: {param}'}), 400
+        
+        # Create profile
+        profile = CustomProfile(
+            name=data['name'],
+            parameters=params,
+            description=data.get('description', ''),
+            use_case=data.get('use_case', ''),
+            created_by=user.id
+        )
+        
+        db.session.add(profile)
+        db.session.commit()
+        
+        return jsonify(profile.to_dict()), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>', methods=['PUT'])
+@token_required
+@admin_required
+def update_custom_profile(user, profile_id):
+    """Update a custom profile (admin only)"""
+    try:
+        profile = CustomProfile.query.get(profile_id)
+        if not profile:
+            return jsonify({'error': 'Profile not found'}), 404
+        
+        data = request.get_json()
+        
+        # Update fields
+        if 'name' in data and data['name'] != profile.name:
+            existing = CustomProfile.query.filter_by(name=data['name']).first()
+            if existing:
+                return jsonify({'error': 'Profile name already exists'}), 400
+            profile.name = data['name']
+        
+        if 'parameters' in data:
+            profile.parameters = data['parameters']
+        
+        if 'description' in data:
+            profile.description = data['description']
+        
+        if 'use_case' in data:
+            profile.use_case = data['use_case']
+        
+        profile.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify(profile.to_dict())
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>', methods=['DELETE'])
+@token_required
+@admin_required
+def delete_custom_profile(user, profile_id):
+    """Delete a custom profile (admin only)"""
+    try:
+        profile = CustomProfile.query.get(profile_id)
+        if not profile:
+            return jsonify({'error': 'Profile not found'}), 404
+        
+        # Check if profile is in use
+        atms_using = ATM.query.filter_by(profile_override_id=profile_id).count()
+        if atms_using > 0:
+            return jsonify({'error': f'Cannot delete profile. {atms_using} ATM(s) are using it.'}), 400
+        
+        db.session.delete(profile)
+        db.session.commit()
+        
+        return jsonify({'message': 'Profile deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/atms/<int:atm_id>/assign-profile', methods=['PUT'])
+@token_required
+@admin_required
+def assign_profile_to_atm(user, atm_id):
+    """Assign a profile to an ATM (admin only)"""
+    try:
+        atm = ATM.query.get(atm_id)
+        if not atm:
+            return jsonify({'error': 'ATM not found'}), 404
+        
+        data = request.get_json()
+        profile_name = data.get('profile_name')
+        profile_type = data.get('profile_type')  # 'preset' or 'custom'
+        
+        if not profile_name or not profile_type:
+            return jsonify({'error': 'profile_name and profile_type are required'}), 400
+        
+        if profile_type == 'preset':
+            # Verify preset exists
+            from services.synthetic_data_generator import SyntheticTransactionGenerator
+            if profile_name not in SyntheticTransactionGenerator.LOCATION_PROFILES:
+                return jsonify({'error': 'Invalid preset profile'}), 400
+            
+            atm.profile_override = profile_name
+            atm.profile_override_type = 'preset'
+            atm.profile_override_id = None
+            
+        elif profile_type == 'custom':
+            # Verify custom profile exists
+            profile = CustomProfile.query.filter_by(name=profile_name).first()
+            if not profile:
+                return jsonify({'error': 'Custom profile not found'}), 404
+            
+            atm.profile_override = profile_name
+            atm.profile_override_type = 'custom'
+            atm.profile_override_id = profile.id
+        else:
+            return jsonify({'error': 'Invalid profile_type. Must be "preset" or "custom"'}), 400
+        
+        db.session.commit()
+        clear_cache()
+        
+        return jsonify(atm.to_dict())
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/atms/<int:atm_id>/clear-profile', methods=['PUT'])
+@token_required
+@admin_required
+def clear_profile_override(user, atm_id):
+    """Clear profile override for an ATM (use auto-detection) (admin only)"""
+    try:
+        atm = ATM.query.get(atm_id)
+        if not atm:
+            return jsonify({'error': 'ATM not found'}), 404
+        
+        atm.profile_override = None
+        atm.profile_override_type = None
+        atm.profile_override_id = None
+        
+        db.session.commit()
+        clear_cache()
+        
+        return jsonify(atm.to_dict())
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     create_tables()   # Run DB setup when app starts
@@ -1741,4 +2544,4 @@ if __name__ == '__main__':
     print("🚚 Vehicle Routing endpoints available at: /api/vehicles/* and /api/routes/*")
     print("\n")
     
-    app.run(debug=True, port=5000)
+    app.run(debug=False, port=5000, use_reloader=False)

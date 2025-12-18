@@ -11,8 +11,8 @@
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/Girishkumar321/smart-atm-cash-optimiser.git
-cd smart-atm-cash-optimiser
+git clone https://github.com/bahldevraj/Smart-atm-cash-distribution.git
+cd Smart-atm-cash-distribution
 ```
 
 ### Step 2: Backend Setup
@@ -71,7 +71,7 @@ If you already have the project on Git and want to set it up on a different comp
 
 ```bash
 git clone <your-repo-url>
-cd smart-atm-cash-optimiser
+cd Smart-atm-cash-distribution
 cd backend
 pip install -r requirements.txt
 ```
@@ -172,7 +172,7 @@ python setup_database.py
 ## 📊 Project Structure
 
 ```
-smart-atm-cash-optimiser/
+Smart-atm-cash-distribution/
 ├── backend/
 │   ├── .env                    # Your config (not in Git)
 │   ├── .env.example           # Template (in Git)

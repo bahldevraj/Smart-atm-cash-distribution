@@ -36,12 +36,19 @@ import {
     LogOut,
     User,
     Shield,
+    UserCog,
+    Maximize,
+    Gauge,
 } from "lucide-react";
 import VehicleManagement from "./VehicleManagement";
 import RoutePlanning from "./RoutePlanning";
 import RouteDashboard from "./RouteDashboard";
 import AccessControl from "./AccessControl";
 import AuthPage from "./AuthPage";
+import ModelTrainingModal from "./ModelTrainingModal";
+import SyntheticDataGenerator from "./SyntheticDataGenerator";
+import MetricsModal from "./MetricsModal";
+import ProfileManager from "./ProfileManager";
 
 console.log("Routing components loaded:", {
     VehicleManagement: !!VehicleManagement,
@@ -49,7 +56,7 @@ console.log("Routing components loaded:", {
     RouteDashboard: !!RouteDashboard,
 });
 
-const API_BASE = "http://localhost:5000/api";
+const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
 
 const SmartATMDashboard = () => {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -78,12 +85,14 @@ const SmartATMDashboard = () => {
     // Fetch data - memoized to prevent recreation
     const fetchData = useCallback(async () => {
         try {
+            // Add cache busting timestamp
+            const timestamp = new Date().getTime();
             const [vaultsRes, atmsRes, transactionsRes, analyticsRes] =
                 await Promise.all([
-                    fetch(`${API_BASE}/vaults`).then((r) => r.json()),
-                    fetch(`${API_BASE}/atms`).then((r) => r.json()),
-                    fetch(`${API_BASE}/transactions`).then((r) => r.json()),
-                    fetch(`${API_BASE}/analytics/dashboard`).then((r) =>
+                    fetch(`${API_BASE}/vaults?_=${timestamp}`).then((r) => r.json()),
+                    fetch(`${API_BASE}/atms?_=${timestamp}`).then((r) => r.json()),
+                    fetch(`${API_BASE}/transactions?_=${timestamp}`).then((r) => r.json()),
+                    fetch(`${API_BASE}/analytics/dashboard?_=${timestamp}`).then((r) =>
                         r.json()
                     ),
                 ]);
@@ -95,7 +104,7 @@ const SmartATMDashboard = () => {
             });
             console.log(
                 "ATMs:",
-                atmsRes.map((a) => `${a.id}. ${a.name}`).join(", ")
+                atmsRes.map((a) => `${a.id}. ${a.name} - Profile: ${a.detected_profile || 'auto'}`).join(", ")
             );
 
             setVaults(vaultsRes);
@@ -209,115 +218,135 @@ const SmartATMDashboard = () => {
     }, [activeTab, selectedATMForForecast, fetchMLMetrics]);
 
     // CRUD Operations - memoized
-    const addVault = useCallback(async (vaultData) => {
-        try {
-            const response = await fetch(`${API_BASE}/vaults`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(vaultData),
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
+    const addVault = useCallback(
+        async (vaultData) => {
+            try {
+                const response = await fetch(`${API_BASE}/vaults`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(vaultData),
+                });
+                if (response.ok) {
+                    fetchData();
+                    return true;
+                }
+            } catch (error) {
+                console.error("Failed to add vault:", error);
             }
-        } catch (error) {
-            console.error("Failed to add vault:", error);
-        }
-        return false;
-    }, [fetchData]);
+            return false;
+        },
+        [fetchData]
+    );
 
-    const updateVault = useCallback(async (vaultId, vaultData) => {
-        try {
-            const response = await fetch(`${API_BASE}/vaults/${vaultId}`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(vaultData),
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
+    const updateVault = useCallback(
+        async (vaultId, vaultData) => {
+            try {
+                const response = await fetch(`${API_BASE}/vaults/${vaultId}`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(vaultData),
+                });
+                if (response.ok) {
+                    fetchData();
+                    return true;
+                }
+            } catch (error) {
+                console.error("Failed to update vault:", error);
             }
-        } catch (error) {
-            console.error("Failed to update vault:", error);
-        }
-        return false;
-    }, [fetchData]);
+            return false;
+        },
+        [fetchData]
+    );
 
-    const deleteVault = useCallback(async (vaultId) => {
-        if (!window.confirm("Are you sure you want to delete this vault?")) {
-            return;
-        }
-        try {
-            const response = await fetch(`${API_BASE}/vaults/${vaultId}`, {
-                method: "DELETE",
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
+    const deleteVault = useCallback(
+        async (vaultId) => {
+            if (
+                !window.confirm("Are you sure you want to delete this vault?")
+            ) {
+                return;
             }
-        } catch (error) {
-            console.error("Failed to delete vault:", error);
-        }
-        return false;
-    }, [fetchData]);
+            try {
+                const response = await fetch(`${API_BASE}/vaults/${vaultId}`, {
+                    method: "DELETE",
+                });
+                if (response.ok) {
+                    fetchData();
+                    return true;
+                }
+            } catch (error) {
+                console.error("Failed to delete vault:", error);
+            }
+            return false;
+        },
+        [fetchData]
+    );
 
-    const addATM = useCallback(async (atmData) => {
-        try {
-            const response = await fetch(`${API_BASE}/atms`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(atmData),
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
+    const addATM = useCallback(
+        async (atmData) => {
+            try {
+                const response = await fetch(`${API_BASE}/atms`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(atmData),
+                });
+                if (response.ok) {
+                    fetchData();
+                    return true;
+                }
+            } catch (error) {
+                console.error("Failed to add ATM:", error);
             }
-        } catch (error) {
-            console.error("Failed to add ATM:", error);
-        }
-        return false;
-    }, [fetchData]);
+            return false;
+        },
+        [fetchData]
+    );
 
-    const updateATM = useCallback(async (atmId, atmData) => {
-        try {
-            const response = await fetch(`${API_BASE}/atms/${atmId}`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(atmData),
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
+    const updateATM = useCallback(
+        async (atmId, atmData) => {
+            try {
+                const response = await fetch(`${API_BASE}/atms/${atmId}`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(atmData),
+                });
+                if (response.ok) {
+                    fetchData();
+                    return true;
+                }
+            } catch (error) {
+                console.error("Failed to update ATM:", error);
             }
-        } catch (error) {
-            console.error("Failed to update ATM:", error);
-        }
-        return false;
-    }, [fetchData]);
+            return false;
+        },
+        [fetchData]
+    );
 
-    const deleteATM = useCallback(async (atmId) => {
-        if (!window.confirm("Are you sure you want to delete this ATM?")) {
-            return;
-        }
-        try {
-            const response = await fetch(`${API_BASE}/atms/${atmId}`, {
-                method: "DELETE",
-            });
-            if (response.ok) {
-                fetchData();
-                return true;
+    const deleteATM = useCallback(
+        async (atmId) => {
+            if (!window.confirm("Are you sure you want to delete this ATM?")) {
+                return;
             }
-        } catch (error) {
-            console.error("Failed to delete ATM:", error);
-        }
-        return false;
-    }, [fetchData]);
+            try {
+                const response = await fetch(`${API_BASE}/atms/${atmId}`, {
+                    method: "DELETE",
+                });
+                if (response.ok) {
+                    fetchData();
+                    return true;
+                }
+            } catch (error) {
+                console.error("Failed to delete ATM:", error);
+            }
+            return false;
+        },
+        [fetchData]
+    );
 
     // Check authentication on mount
     useEffect(() => {
-        const token = localStorage.getItem('token');
-        const user = localStorage.getItem('user');
-        
+        const token = localStorage.getItem("token");
+        const user = localStorage.getItem("user");
+
         if (token && user) {
             setIsAuthenticated(true);
             setCurrentUser(JSON.parse(user));
@@ -326,28 +355,28 @@ const SmartATMDashboard = () => {
 
     // Helper function to get auth headers
     const getAuthHeaders = () => {
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem("token");
         return {
-            'Content-Type': 'application/json',
-            'Authorization': token ? `Bearer ${token}` : ''
+            "Content-Type": "application/json",
+            Authorization: token ? `Bearer ${token}` : "",
         };
     };
 
     // Handle login
     const handleLogin = (token, user) => {
-        localStorage.setItem('token', token);
-        localStorage.setItem('user', JSON.stringify(user));
+        localStorage.setItem("token", token);
+        localStorage.setItem("user", JSON.stringify(user));
         setIsAuthenticated(true);
         setCurrentUser(user);
     };
 
     // Handle logout
     const handleLogout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
         setIsAuthenticated(false);
         setCurrentUser(null);
-        setActiveTab('dashboard');
+        setActiveTab("dashboard");
     };
 
     // Components
@@ -361,68 +390,81 @@ const SmartATMDashboard = () => {
         }, []);
 
         // Memoize expensive computations (must be before any early returns)
-        const utilizationData = useMemo(() => 
-            analytics?.atm_utilization?.map((atm) => ({
-                name: atm.name.replace("ATM ", ""),
-                utilization: atm.utilization,
-                balance: atm.current_balance / 1000,
-                capacity: atm.capacity / 1000,
-            })) || [], [analytics]
+        const utilizationData = useMemo(
+            () =>
+                analytics?.atm_utilization?.map((atm) => ({
+                    name: atm.name.replace("ATM ", ""),
+                    utilization: atm.utilization,
+                    balance: atm.current_balance / 1000,
+                    capacity: atm.capacity / 1000,
+                })) || [],
+            [analytics]
         );
 
         // ATM Status Distribution - memoized
-        const atmStatusData = useMemo(() => 
-            analytics?.atm_utilization?.reduce(
-                (acc, atm) => {
-                    const utilizationPct =
-                        (atm.current_balance / atm.capacity) * 100;
-                    if (utilizationPct < 20) acc.critical++;
-                    else if (utilizationPct < 50) acc.warning++;
-                    else acc.healthy++;
-                    return acc;
-                },
-                { healthy: 0, warning: 0, critical: 0 }
-            ) || { healthy: 0, warning: 0, critical: 0 }, [analytics]
+        const atmStatusData = useMemo(
+            () =>
+                analytics?.atm_utilization?.reduce(
+                    (acc, atm) => {
+                        const utilizationPct =
+                            (atm.current_balance / atm.capacity) * 100;
+                        if (utilizationPct < 20) acc.critical++;
+                        else if (utilizationPct < 50) acc.warning++;
+                        else acc.healthy++;
+                        return acc;
+                    },
+                    { healthy: 0, warning: 0, critical: 0 }
+                ) || { healthy: 0, warning: 0, critical: 0 },
+            [analytics]
         );
 
-        const statusPieData = useMemo(() => [
-            {
-                name: "Healthy (>50%)",
-                value: atmStatusData.healthy,
-                color: "#10B981",
-            },
-            {
-                name: "Warning (20-50%)",
-                value: atmStatusData.warning,
-                color: "#F59E0B",
-            },
-            {
-                name: "Critical (<20%)",
-                value: atmStatusData.critical,
-                color: "#EF4444",
-            },
-        ], [atmStatusData]);
+        const statusPieData = useMemo(
+            () => [
+                {
+                    name: "Healthy (>50%)",
+                    value: atmStatusData.healthy,
+                    color: "#10B981",
+                },
+                {
+                    name: "Warning (20-50%)",
+                    value: atmStatusData.warning,
+                    color: "#F59E0B",
+                },
+                {
+                    name: "Critical (<20%)",
+                    value: atmStatusData.critical,
+                    color: "#EF4444",
+                },
+            ],
+            [atmStatusData]
+        );
 
         // Vault Balance Distribution - memoized
-        const vaultBalanceData = useMemo(() => 
-            vaults.map((vault) => ({
-                name: vault.name
-                    .replace("Vault - ", "")
-                    .replace("Main Vault - ", ""),
-                balance: vault.current_balance / 1000000,
-                capacity: vault.capacity / 1000000,
-                utilization: (vault.current_balance / vault.capacity) * 100,
-            })), [vaults]
+        const vaultBalanceData = useMemo(
+            () =>
+                vaults.map((vault) => ({
+                    name: vault.name
+                        .replace("Vault - ", "")
+                        .replace("Main Vault - ", ""),
+                    balance: vault.current_balance / 1000000,
+                    capacity: vault.capacity / 1000000,
+                    utilization: (vault.current_balance / vault.capacity) * 100,
+                })),
+            [vaults]
         );
 
         // All ATMs by utilization - memoized
-        const allAtmsByUtilization = useMemo(() => 
-            analytics?.atm_utilization ? [...analytics.atm_utilization]
-                .sort((a, b) => b.utilization - a.utilization)
-                .map((atm) => ({
-                    name: atm.name.replace("ATM ", ""),
-                    utilization: atm.utilization,
-                })) : [], [analytics]
+        const allAtmsByUtilization = useMemo(
+            () =>
+                analytics?.atm_utilization
+                    ? [...analytics.atm_utilization]
+                          .sort((a, b) => b.utilization - a.utilization)
+                          .map((atm) => ({
+                              name: atm.name.replace("ATM ", ""),
+                              utilization: atm.utilization,
+                          }))
+                    : [],
+            [analytics]
         );
 
         const COLORS = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6"];
@@ -828,6 +870,8 @@ const SmartATMDashboard = () => {
         const [formData, setFormData] = useState({
             name: "",
             location: "",
+            latitude: "",
+            longitude: "",
             capacity: "",
             current_balance: "",
         });
@@ -837,6 +881,8 @@ const SmartATMDashboard = () => {
             setFormData({
                 name: vault.name,
                 location: vault.location,
+                latitude: vault.latitude || "",
+                longitude: vault.longitude || "",
                 capacity: vault.capacity,
                 current_balance: vault.current_balance,
             });
@@ -854,6 +900,8 @@ const SmartATMDashboard = () => {
                 setFormData({
                     name: "",
                     location: "",
+                    latitude: "",
+                    longitude: "",
                     capacity: "",
                     current_balance: "",
                 });
@@ -866,6 +914,8 @@ const SmartATMDashboard = () => {
             setFormData({
                 name: "",
                 location: "",
+                latitude: "",
+                longitude: "",
                 capacity: "",
                 current_balance: "",
             });
@@ -900,8 +950,46 @@ const SmartATMDashboard = () => {
                                         name: e.target.value,
                                     })
                                 }
-                                className="border border-gray-300 rounded-md px-3 py-2"
+                                className="border border-gray-300 rounded-md px-3 py-2 col-span-2"
                                 required
+                            />
+                            <input
+                                placeholder="Location"
+                                value={formData.location}
+                                onChange={(e) =>
+                                    setFormData({
+                                        ...formData,
+                                        location: e.target.value,
+                                    })
+                                }
+                                className="border border-gray-300 rounded-md px-3 py-2 col-span-2"
+                                required
+                            />
+                            <input
+                                type="number"
+                                step="any"
+                                placeholder="Latitude (for routing)"
+                                value={formData.latitude}
+                                onChange={(e) =>
+                                    setFormData({
+                                        ...formData,
+                                        latitude: e.target.value,
+                                    })
+                                }
+                                className="border border-gray-300 rounded-md px-3 py-2"
+                            />
+                            <input
+                                type="number"
+                                step="any"
+                                placeholder="Longitude (for routing)"
+                                value={formData.longitude}
+                                onChange={(e) =>
+                                    setFormData({
+                                        ...formData,
+                                        longitude: e.target.value,
+                                    })
+                                }
+                                className="border border-gray-300 rounded-md px-3 py-2"
                             />
                             <input
                                 placeholder="Location"
@@ -956,10 +1044,19 @@ const SmartATMDashboard = () => {
                         <thead className="bg-gray-50">
                             <tr>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    ID
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                                     Name
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                                     Location
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    <div>Coordinates</div>
+                                    <div className="text-xs normal-case text-gray-400">
+                                        (Lat, Long)
+                                    </div>
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                                     Capacity
@@ -978,11 +1075,26 @@ const SmartATMDashboard = () => {
                         <tbody className="bg-white divide-y divide-gray-200">
                             {vaults.map((vault) => (
                                 <tr key={vault.id}>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        {vault.id}
+                                    </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                         {vault.name}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                         {vault.location}
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        {vault.latitude && vault.longitude ? (
+                                            <span className="text-xs">
+                                                📍 {vault.latitude.toFixed(4)},{" "}
+                                                {vault.longitude.toFixed(4)}
+                                            </span>
+                                        ) : (
+                                            <span className="text-xs text-gray-400">
+                                                Not set
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                         ${vault.capacity.toLocaleString()}
@@ -1077,11 +1189,15 @@ const SmartATMDashboard = () => {
                             }
                             className="w-full border border-gray-300 rounded-md px-3 py-2"
                         >
-                            {atms.map((atm) => (
-                                <option key={atm.id} value={atm.id}>
-                                    {atm.name} - {atm.location}
-                                </option>
-                            ))}
+                            {atms && atms.length > 0 ? (
+                                atms.map((atm) => (
+                                    <option key={atm.id} value={atm.id}>
+                                        {atm.name} - {atm.location}
+                                    </option>
+                                ))
+                            ) : (
+                                <option value="">Loading ATMs...</option>
+                            )}
                         </select>
                     </div>
 
@@ -1378,53 +1494,66 @@ const SmartATMDashboard = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                    {mlForecast.forecast.map((day, idx) => {
-                                        const isWeekend =
-                                            day.day_of_week === "Saturday" ||
-                                            day.day_of_week === "Sunday";
-                                        const isHigh =
-                                            day.predicted_demand >
-                                            mlForecast.avg_daily_demand;
+                                    {mlForecast.forecast &&
+                                    mlForecast.forecast.length > 0 ? (
+                                        mlForecast.forecast.map((day, idx) => {
+                                            const isWeekend =
+                                                day.day_of_week ===
+                                                    "Saturday" ||
+                                                day.day_of_week === "Sunday";
+                                            const isHigh =
+                                                day.predicted_demand >
+                                                mlForecast.avg_daily_demand;
 
-                                        return (
-                                            <tr
-                                                key={idx}
-                                                className={
-                                                    isWeekend
-                                                        ? "bg-blue-50"
-                                                        : ""
-                                                }
-                                            >
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                                    {day.date}
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                                                    <div className="flex items-center gap-2">
-                                                        <Calendar className="h-4 w-4" />
-                                                        {day.day_of_week}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-purple-600">
-                                                    {
-                                                        day.predicted_demand_formatted
+                                            return (
+                                                <tr
+                                                    key={idx}
+                                                    className={
+                                                        isWeekend
+                                                            ? "bg-blue-50"
+                                                            : ""
                                                     }
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <span
-                                                        className={`px-2 py-1 text-xs rounded-full ${
-                                                            isHigh
-                                                                ? "bg-red-100 text-red-800"
-                                                                : "bg-green-100 text-green-800"
-                                                        }`}
-                                                    >
-                                                        {isHigh
-                                                            ? "High Demand"
-                                                            : "Normal"}
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
+                                                >
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                                        {day.date}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                                        <div className="flex items-center gap-2">
+                                                            <Calendar className="h-4 w-4" />
+                                                            {day.day_of_week}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-purple-600">
+                                                        {
+                                                            day.predicted_demand_formatted
+                                                        }
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <span
+                                                            className={`px-2 py-1 text-xs rounded-full ${
+                                                                isHigh
+                                                                    ? "bg-red-100 text-red-800"
+                                                                    : "bg-green-100 text-green-800"
+                                                            }`}
+                                                        >
+                                                            {isHigh
+                                                                ? "High Demand"
+                                                                : "Normal"}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
+                                    ) : (
+                                        <tr>
+                                            <td
+                                                colSpan="4"
+                                                className="px-6 py-4 text-center text-gray-500"
+                                            >
+                                                No forecast data available
+                                            </td>
+                                        </tr>
+                                    )}
                                 </tbody>
                             </table>
                         </div>
@@ -1457,26 +1586,33 @@ const SmartATMDashboard = () => {
                                 <span>
                                     Peak demand expected on:{" "}
                                     <strong>
-                                        {
-                                            mlForecast.forecast.reduce(
-                                                (max, day) =>
-                                                    day.predicted_demand >
-                                                    max.predicted_demand
-                                                        ? day
-                                                        : max
-                                            ).date
-                                        }
+                                        {mlForecast.forecast &&
+                                        mlForecast.forecast.length > 0
+                                            ? mlForecast.forecast.reduce(
+                                                  (max, day) =>
+                                                      day.predicted_demand >
+                                                      max.predicted_demand
+                                                          ? day
+                                                          : max
+                                              ).date
+                                            : "N/A"}
                                     </strong>{" "}
-                                    (
-                                    {
-                                        mlForecast.forecast.reduce((max, day) =>
-                                            day.predicted_demand >
-                                            max.predicted_demand
-                                                ? day
-                                                : max
-                                        ).day_of_week
-                                    }
-                                    )
+                                    {mlForecast.forecast &&
+                                        mlForecast.forecast.length > 0 && (
+                                            <>
+                                                (
+                                                {
+                                                    mlForecast.forecast.reduce(
+                                                        (max, day) =>
+                                                            day.predicted_demand >
+                                                            max.predicted_demand
+                                                                ? day
+                                                                : max
+                                                    ).day_of_week
+                                                }
+                                                )
+                                            </>
+                                        )}
                                 </span>
                             </li>
                             <li className="flex items-start gap-2">
@@ -3416,22 +3552,61 @@ const SmartATMDashboard = () => {
     const ATMManagement = () => {
         const [showForm, setShowForm] = useState(false);
         const [editingATM, setEditingATM] = useState(null);
+        const [trainingModalATM, setTrainingModalATM] = useState(null);
+        const [syntheticDataATM, setSyntheticDataATM] = useState(null);
+        const [metricsModalATM, setMetricsModalATM] = useState(null);
+        const [availableProfiles, setAvailableProfiles] = useState([]);
         const [formData, setFormData] = useState({
             name: "",
             location: "",
+            latitude: "",
+            longitude: "",
             capacity: "",
             current_balance: "",
             daily_avg_demand: "",
+            profile_override: null,
+            profile_override_type: null,
+            profile_override_id: null,
         });
+
+        // Fetch available profiles
+        useEffect(() => {
+            const fetchProfiles = async () => {
+                try {
+                    const token = localStorage.getItem('token');
+                    const response = await fetch(`${API_BASE}/profiles`, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        setAvailableProfiles(data);
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch profiles:', error);
+                }
+            };
+            fetchProfiles();
+        }, []);
+
+        // Calculate training statistics
+        const untrainedATMs = atms.filter((a) => a.transaction_count === 0);
+        const trainedATMs = atms.filter((a) => a.transaction_count > 0);
 
         const handleEdit = (atm) => {
             setEditingATM(atm);
             setFormData({
                 name: atm.name,
                 location: atm.location,
+                latitude: atm.latitude || "",
+                longitude: atm.longitude || "",
                 capacity: atm.capacity,
                 current_balance: atm.current_balance,
                 daily_avg_demand: atm.daily_avg_demand,
+                profile_override: atm.profile_override || null,
+                profile_override_type: atm.profile_override_type || null,
+                profile_override_id: atm.profile_override_id || null,
             });
             setShowForm(true);
         };
@@ -3447,9 +3622,14 @@ const SmartATMDashboard = () => {
                 setFormData({
                     name: "",
                     location: "",
+                    latitude: "",
+                    longitude: "",
                     capacity: "",
                     current_balance: "",
                     daily_avg_demand: "",
+                    profile_override: "",
+                    profile_override_type: "",
+                    profile_override_id: null,
                 });
             }
         };
@@ -3460,10 +3640,41 @@ const SmartATMDashboard = () => {
             setFormData({
                 name: "",
                 location: "",
+                latitude: "",
+                longitude: "",
                 capacity: "",
                 current_balance: "",
                 daily_avg_demand: "",
+                profile_override: null,
+                profile_override_type: null,
+                profile_override_id: null,
             });
+        };
+
+        const handleDelete = async (atmId) => {
+            if (!window.confirm("Are you sure you want to delete this ATM?")) {
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/atms/${atmId}`, {
+                    method: "DELETE",
+                });
+                if (response.ok) {
+                    fetchData();
+                    alert("ATM deleted successfully!");
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    console.error("Delete failed:", errorData);
+                    alert(
+                        `Failed to delete ATM: ${
+                            errorData.error || response.statusText
+                        }`
+                    );
+                }
+            } catch (error) {
+                console.error("Failed to delete ATM:", error);
+                alert(`Failed to delete ATM: ${error.message}`);
+            }
         };
 
         return (
@@ -3495,7 +3706,7 @@ const SmartATMDashboard = () => {
                                         name: e.target.value,
                                     })
                                 }
-                                className="border border-gray-300 rounded-md px-3 py-2"
+                                className="border border-gray-300 rounded-md px-3 py-2 col-span-3"
                                 required
                             />
                             <input
@@ -3509,6 +3720,32 @@ const SmartATMDashboard = () => {
                                 }
                                 className="border border-gray-300 rounded-md px-3 py-2"
                                 required
+                            />
+                            <input
+                                type="number"
+                                step="any"
+                                placeholder="Latitude (for routing)"
+                                value={formData.latitude}
+                                onChange={(e) =>
+                                    setFormData({
+                                        ...formData,
+                                        latitude: e.target.value,
+                                    })
+                                }
+                                className="border border-gray-300 rounded-md px-3 py-2"
+                            />
+                            <input
+                                type="number"
+                                step="any"
+                                placeholder="Longitude (for routing)"
+                                value={formData.longitude}
+                                onChange={(e) =>
+                                    setFormData({
+                                        ...formData,
+                                        longitude: e.target.value,
+                                    })
+                                }
+                                className="border border-gray-300 rounded-md px-3 py-2"
                             />
                             <input
                                 type="number"
@@ -3546,12 +3783,76 @@ const SmartATMDashboard = () => {
                                         daily_avg_demand: e.target.value,
                                     })
                                 }
-                                className="border border-gray-300 rounded-md px-3 py-2 col-span-2"
+                                className="border border-gray-300 rounded-md px-3 py-2 col-span-3"
                                 required
                             />
+                            
+                            {/* Profile Override Selector */}
+                            <div className="col-span-3">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Profile Override (Optional)
+                                </label>
+                                <select
+                                    value={formData.profile_override_type === 'preset' ? formData.profile_override : 
+                                           formData.profile_override_type === 'custom' ? `custom_${formData.profile_override_id}` : 
+                                           'auto'}
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+                                        if (value === 'auto') {
+                                            setFormData({
+                                                ...formData,
+                                                profile_override: null,
+                                                profile_override_type: null,
+                                                profile_override_id: null
+                                            });
+                                        } else if (value.startsWith('custom_')) {
+                                            const customId = parseInt(value.replace('custom_', ''));
+                                            const customProfile = availableProfiles.find(p => p.id === customId);
+                                            setFormData({
+                                                ...formData,
+                                                profile_override: customProfile?.name,
+                                                profile_override_type: 'custom',
+                                                profile_override_id: customId
+                                            });
+                                        } else {
+                                            setFormData({
+                                                ...formData,
+                                                profile_override: value,
+                                                profile_override_type: 'preset',
+                                                profile_override_id: null
+                                            });
+                                        }
+                                    }}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                >
+                                    <option value="auto">Auto-detect from location</option>
+                                    <optgroup label="Preset Profiles">
+                                        {availableProfiles.filter(p => p.is_preset).map(profile => (
+                                            <option key={profile.name} value={profile.name}>
+                                                {profile.name.replace(/_/g, ' ')} ({profile.usage_count} ATMs)
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                    {availableProfiles.filter(p => !p.is_preset).length > 0 && (
+                                        <optgroup label="Custom Profiles">
+                                            {availableProfiles.filter(p => !p.is_preset).map(profile => (
+                                                <option key={profile.id} value={`custom_${profile.id}`}>
+                                                    {profile.name} ({profile.usage_count} ATMs)
+                                                </option>
+                                            ))}
+                                        </optgroup>
+                                    )}
+                                </select>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    {formData.profile_override_type ? 
+                                        `Using ${formData.profile_override_type} profile: ${formData.profile_override}` : 
+                                        'Profile will be auto-detected from ATM name and location'}
+                                </p>
+                            </div>
+                            
                             <button
                                 type="submit"
-                                className="col-span-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md"
+                                className="col-span-3 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md"
                             >
                                 {editingATM ? "Update ATM" : "Add ATM"}
                             </button>
@@ -3559,15 +3860,27 @@ const SmartATMDashboard = () => {
                     </div>
                 )}
 
-                <div className="bg-white rounded-lg shadow-md overflow-hidden">
+                <div className="bg-white rounded-lg shadow-md overflow-x-auto">
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
                             <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    ID
+                                </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                                     Name
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                                     Location
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    <div>Coordinates</div>
+                                    <div className="text-xs normal-case text-gray-400">
+                                        (Lat, Long)
+                                    </div>
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    Profile
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                                     Balance
@@ -3576,9 +3889,18 @@ const SmartATMDashboard = () => {
                                     Daily Demand
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                                    Status
+                                    Data Status
                                 </th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    Model Accuracy (MAPE)
+                                </th>
+                                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                                    Model Metrics
+                                </th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    Cash Status
+                                </th>
+                                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">
                                     Actions
                                 </th>
                             </tr>
@@ -3592,19 +3914,121 @@ const SmartATMDashboard = () => {
                                 const isLow = shortage > 0;
                                 return (
                                     <tr key={atm.id}>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                            {atm.id}
+                                        </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                             {atm.name}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                             {atm.location}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                            {atm.latitude && atm.longitude ? (
+                                                <span className="text-xs">
+                                                    📍 {atm.latitude.toFixed(4)}
+                                                    , {atm.longitude.toFixed(4)}
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs text-gray-400">
+                                                    Not set
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                            {atm.detected_profile ? (
+                                                <span className="px-2 py-1 text-xs rounded-md bg-purple-100 text-purple-800 font-medium">
+                                                    {atm.detected_profile.replace(/_/g, ' ')}
+                                                </span>
+                                            ) : (
+                                                <span className="text-xs text-gray-400">
+                                                    Default
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                             $
                                             {atm.current_balance.toLocaleString()}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                             $
                                             {atm.daily_avg_demand.toLocaleString()}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <span
+                                                className={`px-2 py-1 text-xs rounded-full ${
+                                                    atm.transaction_count === 0
+                                                        ? "bg-yellow-100 text-yellow-800"
+                                                        : atm.transaction_count <
+                                                          100
+                                                        ? "bg-blue-100 text-blue-800"
+                                                        : "bg-green-100 text-green-800"
+                                                }`}
+                                            >
+                                                {atm.transaction_count === 0
+                                                    ? "No Data"
+                                                    : atm.transaction_count <
+                                                      100
+                                                    ? `${atm.transaction_count} txns`
+                                                    : `${atm.transaction_count} txns ✓`}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            {atm.mape === 'outdated' ? (
+                                                <div className="flex flex-col gap-1">
+                                                    <span className="px-2 py-1 text-xs rounded-full font-medium bg-orange-100 text-orange-800">
+                                                        ⚠ Outdated
+                                                    </span>
+                                                    {atm.best_model && (
+                                                        <span className="text-xs text-gray-500">
+                                                            {atm.best_model}
+                                                        </span>
+                                                    )}
+                                                    <span className="text-xs text-orange-600 font-medium">
+                                                        Profile Changed
+                                                    </span>
+                                                </div>
+                                            ) : atm.mape !== null &&
+                                              atm.mape !== undefined ? (
+                                                <div className="flex flex-col gap-1">
+                                                    <span
+                                                        className={`px-2 py-1 text-xs rounded-full font-medium ${
+                                                            atm.mape < 20
+                                                                ? "bg-green-100 text-green-800"
+                                                                : atm.mape < 40
+                                                                ? "bg-yellow-100 text-yellow-800"
+                                                                : "bg-red-100 text-red-800"
+                                                        }`}
+                                                    >
+                                                        {atm.mape.toFixed(2)}%
+                                                    </span>
+                                                    {atm.best_model && (
+                                                        <span className="text-xs text-gray-500">
+                                                            {atm.best_model}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <span className="text-xs text-gray-400">
+                                                    Not Trained
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                                            {atm.transaction_count > 0 ? (
+                                                <button
+                                                    onClick={() =>
+                                                        setMetricsModalATM(atm)
+                                                    }
+                                                    className="text-purple-600 hover:text-purple-900 font-medium text-xs underline"
+                                                >
+                                                    View Metrics
+                                                </button>
+                                            ) : (
+                                                <span className="text-xs text-gray-400">
+                                                    -
+                                                </span>
+                                            )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <span
@@ -3620,20 +4044,63 @@ const SmartATMDashboard = () => {
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                            <button
-                                                onClick={() => handleEdit(atm)}
-                                                className="text-blue-600 hover:text-blue-900 font-medium mr-4"
-                                            >
-                                                Edit
-                                            </button>
-                                            <button
-                                                onClick={() =>
-                                                    deleteATM(atm.id)
-                                                }
-                                                className="text-red-600 hover:text-red-900 font-medium"
-                                            >
-                                                Delete
-                                            </button>
+                                            <div className="flex items-center justify-center gap-2">
+                                                {atm.transaction_count === 0 ? (
+                                                    <>
+                                                        {/* Quick Train Button for Untrained ATMs */}
+                                                        <button
+                                                            onClick={async () => {
+                                                                // Auto-generate data then train
+                                                                setSyntheticDataATM(
+                                                                    atm
+                                                                );
+                                                            }}
+                                                            className="px-3 py-1.5 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-medium hover:from-green-600 hover:to-emerald-700 shadow-sm flex items-center gap-1.5 text-xs"
+                                                            title="Generate data and train model (like ATMs 1-6)"
+                                                        >
+                                                            Quick Train
+                                                        </button>
+                                                        <button
+                                                            onClick={() =>
+                                                                handleEdit(atm)
+                                                            }
+                                                            className="text-blue-600 hover:text-blue-900 font-medium text-xs"
+                                                        >
+                                                            Edit
+                                                        </button>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <button
+                                                            onClick={() =>
+                                                                handleEdit(atm)
+                                                            }
+                                                            className="text-blue-600 hover:text-blue-900 font-medium mr-3"
+                                                        >
+                                                            Edit
+                                                        </button>
+                                                        <button
+                                                            onClick={() =>
+                                                                setTrainingModalATM(
+                                                                    atm
+                                                                )
+                                                            }
+                                                            className="text-purple-600 hover:text-purple-900 font-medium mr-3"
+                                                            title="Train ML Model"
+                                                        >
+                                                            Train Model
+                                                        </button>
+                                                    </>
+                                                )}
+                                                <button
+                                                    onClick={() =>
+                                                        handleDelete(atm.id)
+                                                    }
+                                                    className="text-red-600 hover:text-red-900 font-medium"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 );
@@ -3641,6 +4108,47 @@ const SmartATMDashboard = () => {
                         </tbody>
                     </table>
                 </div>
+
+                {/* Training Modal */}
+                {trainingModalATM && (
+                    <ModelTrainingModal
+                        atm={trainingModalATM}
+                        onClose={() => setTrainingModalATM(null)}
+                        onTrainingComplete={(atmId) => {
+                            console.log(`Training completed for ATM ${atmId}`);
+                            fetchData(); // Refresh data
+                            // Don't close modal - let user see results and close manually
+                        }}
+                        API_BASE={API_BASE}
+                    />
+                )}
+
+                {/* Metrics Modal */}
+                {metricsModalATM && (
+                    <MetricsModal
+                        atm={metricsModalATM}
+                        onClose={() => setMetricsModalATM(null)}
+                    />
+                )}
+
+                {/* Synthetic Data Generator Modal */}
+                {syntheticDataATM && (
+                    <SyntheticDataGenerator
+                        atmId={syntheticDataATM.id}
+                        atmName={syntheticDataATM.name}
+                        onDataGenerated={() => {
+                            fetchData(); // Refresh data
+                        }}
+                        onClose={() => setSyntheticDataATM(null)}
+                        onTrainNow={(atmId) => {
+                            // Open training modal after data generation
+                            const atm = atms.find((a) => a.id === atmId);
+                            if (atm) {
+                                setTrainingModalATM(atm);
+                            }
+                        }}
+                    />
+                )}
             </div>
         );
     };
@@ -3661,29 +4169,31 @@ const SmartATMDashboard = () => {
                                 Smart ATM Optimizer
                             </span>
                         </div>
-                        
+
                         {/* User Menu */}
                         <div className="flex items-center gap-4">
                             <div className="flex items-center gap-2 text-sm text-gray-600">
                                 <User className="h-4 w-4" />
                                 <span>{currentUser?.email}</span>
                             </div>
-                            
+
                             {/* Access Control Button (Root Only) */}
                             {currentUser?.is_root && (
                                 <button
-                                    onClick={() => setActiveTab('access-control')}
+                                    onClick={() =>
+                                        setActiveTab("access-control")
+                                    }
                                     className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition ${
-                                        activeTab === 'access-control'
-                                            ? 'bg-purple-600 text-white'
-                                            : 'text-purple-700 hover:text-purple-900 hover:bg-purple-50 border-2 border-purple-600'
+                                        activeTab === "access-control"
+                                            ? "bg-purple-600 text-white"
+                                            : "text-purple-700 hover:text-purple-900 hover:bg-purple-50 border-2 border-purple-600"
                                     }`}
                                 >
                                     <Shield className="h-4 w-4" />
                                     Access Control
                                 </button>
                             )}
-                            
+
                             <button
                                 onClick={handleLogout}
                                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
@@ -3720,7 +4230,7 @@ const SmartATMDashboard = () => {
                                     {
                                         id: "optimization",
                                         label: "Optimization",
-                                        icon: Settings,
+                                        icon: Gauge,
                                     },
                                     {
                                         id: "transaction-history",
@@ -3771,6 +4281,21 @@ const SmartATMDashboard = () => {
                                         </button>
                                     );
                                 })}
+
+                                {/* Admin-only Profile Manager */}
+                                {currentUser?.is_root && (
+                                    <button
+                                        onClick={() => setActiveTab("profile-manager")}
+                                        className={`w-full flex items-center px-4 py-2 text-left rounded-md transition-colors ${
+                                            activeTab === "profile-manager"
+                                                ? "bg-purple-50 text-purple-700 border-r-2 border-purple-500"
+                                                : "text-gray-700 hover:bg-gray-50"
+                                        }`}
+                                    >
+                                        <UserCog className="h-5 w-5 mr-3" />
+                                        Profile Manager
+                                    </button>
+                                )}
                             </div>
                         </nav>
                     </div>
@@ -3790,7 +4315,10 @@ const SmartATMDashboard = () => {
                         {activeTab === "vehicles" && <VehicleManagement />}
                         {activeTab === "route-planning" && <RoutePlanning />}
                         {activeTab === "route-dashboard" && <RouteDashboard />}
-                        {activeTab === "access-control" && currentUser?.is_root && <AccessControl />}
+                        {activeTab === "profile-manager" &&
+                            currentUser?.is_root && <ProfileManager />}
+                        {activeTab === "access-control" &&
+                            currentUser?.is_root && <AccessControl />}
                     </div>
                 </div>
             </div>

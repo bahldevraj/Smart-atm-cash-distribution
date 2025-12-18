@@ -11,10 +11,13 @@ import pickle
 import os
 import sys
 
-# Add ml_models to path
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ml_models_path = os.path.join(project_root, 'ml_models')
-sys.path.insert(0, ml_models_path)
+# Use centralized path configuration
+from path_config import (
+    get_saved_models_dir,
+    get_data_dir,
+    get_model_path,
+    get_lstm_scaler_path
+)
 
 from forecasting_models import ARIMAForecaster, LSTMForecaster, EnsembleForecaster
 
@@ -23,46 +26,63 @@ ml_forecast_bp = Blueprint('ml_forecast', __name__, url_prefix='/api/ml')
 
 # Global variables to store loaded models
 loaded_models = {}
-MODEL_DIR = os.path.join(project_root, 'ml_models', 'saved_models')
-DATA_PATH = os.path.join(project_root, 'ml_models', 'data', 'atm_demand_data.csv')
+MODEL_DIR = str(get_saved_models_dir())
+DATA_PATH = str(get_data_dir() / 'atm_demand_data.csv')
 
 
 def load_model_for_atm(atm_id: int, model_type: str = 'ensemble'):
-    """Load trained model for specific ATM"""
+    """
+    Load trained model for specific ATM
+    Returns: (model, actual_model_type) tuple or (None, None) if not found
+    """
     model_key = f"{model_type}_atm_{atm_id}"
     
+    # Check cache first
     if model_key in loaded_models:
-        return loaded_models[model_key]
+        cached = loaded_models[model_key]
+        # Return model and the type it was cached with
+        cached_type = model_type
+        for key in loaded_models:
+            if loaded_models[key] is cached and key.endswith(f"_atm_{atm_id}"):
+                cached_type = key.split('_atm_')[0]
+                break
+        return cached, cached_type
     
-    # Try different naming conventions for model files
-    if model_type == 'arima':
-        # Try new naming convention first
-        model_path = os.path.join(MODEL_DIR, f"arima_model_atm_{atm_id}.pkl")
+    # Try to find any available model for this ATM if requested type doesn't exist
+    model_path = None
+    actual_model_type = model_type
+    
+    if model_type in ['arima', 'lstm', 'ensemble']:
+        model_path = get_model_path(atm_id, model_type)
+        model_path = str(model_path)
+        
+        # If requested model doesn't exist, try alternatives
         if not os.path.exists(model_path):
-            # Try old naming convention
-            model_path = os.path.join(MODEL_DIR, f"arima_atm_{atm_id}.pkl")
-    elif model_type == 'lstm':
-        # LSTM models use .h5 format
-        model_path = os.path.join(MODEL_DIR, f"lstm_model_atm_{atm_id}.h5")
-        if not os.path.exists(model_path):
-            # Try old naming convention
-            model_path = os.path.join(MODEL_DIR, f"lstm_atm_{atm_id}.pkl")
-    elif model_type == 'ensemble':
-        # For ensemble, use ARIMA model as fallback since we don't have separate ensemble models
-        model_path = os.path.join(MODEL_DIR, f"ensemble_atm_{atm_id}.pkl")
-        if not os.path.exists(model_path):
-            # Fallback to ARIMA model
-            print(f"⚠ No dedicated ensemble model, using ARIMA for ATM {atm_id}")
-            model_path = os.path.join(MODEL_DIR, f"arima_model_atm_{atm_id}.pkl")
-            if not os.path.exists(model_path):
-                model_path = os.path.join(MODEL_DIR, f"arima_atm_{atm_id}.pkl")
+            print(f"🔍 {model_type} model not found for ATM {atm_id}, trying alternatives...")
+            
+            # Try order: arima -> lstm -> ensemble
+            alternatives = ['arima', 'lstm', 'ensemble']
+            if model_type in alternatives:
+                alternatives.remove(model_type)
+            
+            for alt_type in alternatives:
+                alt_path = str(get_model_path(atm_id, alt_type))
+                if os.path.exists(alt_path):
+                    print(f"✓ Found {alt_type} model instead")
+                    model_path = alt_path
+                    actual_model_type = alt_type
+                    model_key = f"{alt_type}_atm_{atm_id}"
+                    break
     else:
-        # other types
-        model_path = os.path.join(MODEL_DIR, f"{model_type}_atm_{atm_id}.pkl")
+        # other types - construct path manually
+        model_path = str(get_saved_models_dir() / f"{model_type}_atm_{atm_id}.pkl")
     
-    if not os.path.exists(model_path):
-        print(f"✗ Model file not found: {model_path}")
-        return None
+    if not model_path or not os.path.exists(model_path):
+        print(f"✗ No model found for ATM {atm_id} (tried: {model_type})")
+        return None, None
+    
+    print(f"🔍 Loading {actual_model_type} model for ATM {atm_id}")
+    print(f"   Path: {model_path}")
     
     try:
         # Load LSTM models differently
@@ -74,8 +94,8 @@ def load_model_for_atm(atm_id: int, model_type: str = 'ensemble'):
                 model = keras_load_model(model_path, compile=False)
                 model.compile(optimizer='adam', loss='mse')  # Quick compile
                 
-                # Load scaler
-                scaler_path = os.path.join(MODEL_DIR, f"lstm_scaler_atm_{atm_id}.pkl")
+                # Load scaler using centralized path config
+                scaler_path = str(get_lstm_scaler_path(atm_id))
                 if os.path.exists(scaler_path):
                     with open(scaler_path, 'rb') as f:
                         scaler = pickle.load(f)
@@ -130,14 +150,20 @@ def load_model_for_atm(atm_id: int, model_type: str = 'ensemble'):
         if not hasattr(forecaster, 'is_trained'):
             forecaster.is_trained = True
         
-        print(f"✓ Successfully loaded {model_type} model for ATM {atm_id}")
+        print(f"✓ Successfully loaded {actual_model_type} model for ATM {atm_id}")
         loaded_models[model_key] = forecaster
-        return forecaster
+        
+        # Also cache under the actual model type if different
+        if actual_model_type != model_type:
+            actual_key = f"{actual_model_type}_atm_{atm_id}"
+            loaded_models[actual_key] = forecaster
+        
+        return forecaster, actual_model_type
     except Exception as e:
         print(f"Error loading model: {e}")
         import traceback
         traceback.print_exc()
-        return None
+        return None, None
 
 
 def get_recent_data(atm_id: int, days: int = 30):
@@ -177,18 +203,55 @@ def ml_forecast(atm_id):
         }), 400
     
     # Load model
-    model = load_model_for_atm(atm_id, model_type)
+    model, actual_model_type = load_model_for_atm(atm_id, model_type)
     
     if model is None:
+        # Try fallback to using the prediction service instead
+        try:
+            from services.prediction_service import get_prediction_service
+            pred_service = get_prediction_service()
+            
+            # Generate predictions for each day
+            predictions = []
+            forecast_dates = []
+            start_date = datetime.now().date() + timedelta(days=1)
+            
+            for day in range(days_ahead):
+                pred_date = start_date + timedelta(days=day)
+                forecast_dates.append(pred_date.isoformat())
+                
+                # Get prediction for this day
+                pred_value = pred_service.predict_demand(atm_id, days_ahead=day+1)
+                predictions.append(round(float(pred_value), 2))
+            
+            print(f"✓ Using fallback prediction service for ATM {atm_id}")
+            return jsonify({
+                'atm_id': atm_id,
+                'model_type': 'fallback',
+                'forecast_dates': forecast_dates,
+                'predictions': predictions,
+                'total_predicted': round(float(np.sum(predictions)), 2),
+                'avg_daily': round(float(np.mean(predictions)), 2),
+                'confidence': 'medium',
+                'method': 'fallback_predictor',
+                'message': 'Using intelligent fallback prediction. Train a model for better accuracy.'
+            })
+        except Exception as fallback_error:
+            print(f"⚠ Fallback prediction also failed: {fallback_error}")
+            import traceback
+            traceback.print_exc()
+        
         return jsonify({
             'error': f'Model not found for ATM {atm_id}',
-            'message': 'Please train the model first using the notebooks'
+            'message': 'Model not trained yet. Click "Train Model" button in ATM Management to train a model for better predictions.',
+            'suggestion': 'Using conservative estimates until model is trained',
+            'training_required': True
         }), 404
     
     try:
-        # Get recent data for LSTM/ensemble
+        # Get recent data for LSTM/ensemble (use actual_model_type)
         recent_data = None
-        if model_type in ['lstm', 'ensemble']:
+        if actual_model_type in ['lstm', 'ensemble']:
             recent_data = get_recent_data(atm_id, days=30)
             if recent_data is None:
                 return jsonify({
@@ -196,8 +259,8 @@ def ml_forecast(atm_id):
                     'message': 'Historical data required for LSTM predictions'
                 }), 500
         
-        # Make prediction based on model type
-        if model_type == 'arima' or model_type == 'ensemble':
+        # Make prediction based on actual model type loaded
+        if actual_model_type == 'arima' or actual_model_type == 'ensemble':
             # ARIMA/Ensemble models use forecast() method (statsmodels)
             if hasattr(model, 'forecast'):
                 predictions = model.forecast(steps=days_ahead)
@@ -205,7 +268,7 @@ def ml_forecast(atm_id):
                 predictions = model.predict(steps=days_ahead)
             else:
                 raise ValueError("Model has no forecast or predict method")
-        elif model_type == 'lstm' and recent_data is not None:
+        elif actual_model_type == 'lstm' and recent_data is not None:
             predictions = model.predict(steps=days_ahead, recent_data=recent_data)
         else:
             predictions = model.predict(steps=days_ahead)
@@ -236,7 +299,8 @@ def ml_forecast(atm_id):
         
         return jsonify({
             'atm_id': atm_id,
-            'model_type': model_type,
+            'model_type': actual_model_type,  # Return the actual model type used
+            'requested_model_type': model_type,  # What was requested
             'forecast': forecast_data,
             'total_predicted_demand': round(float(np.sum(predictions)), 2),
             'total_predicted_demand_formatted': f"${np.sum(predictions):,.2f}",

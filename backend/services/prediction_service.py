@@ -6,10 +6,13 @@ Uses existing ARIMA/Ensemble models to predict cash requirements
 import sys
 import os
 
-# Add ml_models directory to path
-ml_models_path = os.path.join(os.path.dirname(__file__), '..', '..', 'ml_models')
-if ml_models_path not in sys.path:
-    sys.path.append(ml_models_path)
+# Use centralized path configuration
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from path_config import (
+    get_saved_models_dir,
+    get_model_path,
+    get_lstm_scaler_path
+)
 
 import pickle
 import pandas as pd
@@ -30,12 +33,7 @@ class PredictionService:
     
     def __init__(self, models_dir: str = None):
         if models_dir is None:
-            self.models_dir = os.path.join(
-                os.path.dirname(__file__), 
-                '..', '..', 
-                'ml_models', 
-                'saved_models'
-            )
+            self.models_dir = str(get_saved_models_dir())
         else:
             self.models_dir = models_dir
         
@@ -254,6 +252,27 @@ class PredictionService:
             }
         
         return summary
+    
+    def _fallback_prediction(self, atm_id: int, days: int = 7) -> List[float]:
+        """
+        Fallback prediction for ATMs without trained models
+        Uses conservative estimation
+        
+        Args:
+            atm_id: ATM identifier
+            days: Number of days to predict
+            
+        Returns:
+            List of predicted values (conservative estimates)
+        """
+        try:
+            from fallback_predictor import FallbackPredictor
+            predictor = FallbackPredictor(atm_id, db_session=None)
+            return predictor.predict(days, method='conservative')
+        except Exception as e:
+            print(f"⚠ Fallback prediction error: {e}")
+            # Return safe conservative values
+            return [60000.0] * days
 
 # Singleton instance
 _prediction_service = None

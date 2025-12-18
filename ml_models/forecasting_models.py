@@ -429,3 +429,171 @@ if __name__ == "__main__":
     print(f"  - ARIMA: ✓")
     print(f"  - LSTM: {'✓' if TENSORFLOW_AVAILABLE else '✗ (TensorFlow not installed)'}")
     print(f"  - Prophet: {'✓' if PROPHET_AVAILABLE else '✗ (Prophet not installed)'}")
+
+
+def train_arima_model(atm_id, daily_demand, order=(5, 1, 2)):
+    """
+    Train ARIMA model for a specific ATM
+    
+    Args:
+        atm_id: ATM identifier
+        daily_demand: DataFrame with 'date' and 'demand' columns
+        order: ARIMA order (p, d, q)
+    
+    Returns:
+        Dictionary with model metrics
+    """
+    import os
+    from datetime import datetime
+    
+    # Prepare data
+    demand_values = daily_demand['demand'].values
+    training_days = len(daily_demand)
+    
+    # Split into train/test (80/20)
+    split_idx = int(len(demand_values) * 0.8)
+    train_data = demand_values[:split_idx]
+    test_data = demand_values[split_idx:]
+    
+    # Train ARIMA model
+    arima = ARIMAForecaster(order=order)
+    arima.train(train_data, verbose=False)
+    metrics = arima.evaluate(test_data)
+    
+    # Save model
+    model_dir = os.path.join('ml_models', 'saved_models')
+    os.makedirs(model_dir, exist_ok=True)
+    model_path = os.path.join(model_dir, f'arima_model_atm_{atm_id}.pkl')
+    
+    with open(model_path, 'wb') as f:
+        pickle.dump(arima.model, f)
+    
+    # Save metrics in the same format as existing CSVs
+    metrics_path = os.path.join(model_dir, f'model_metrics_atm_{atm_id}.csv')
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    metrics_df = pd.DataFrame([{
+        'atm_id': atm_id,
+        'model_type': f'ARIMA{order}',
+        'mae': metrics['MAE'],
+        'rmse': metrics['RMSE'],
+        'mape': metrics['MAPE'],
+        'training_days': training_days,
+        'trained_date': current_time
+    }])
+    metrics_df.to_csv(metrics_path, index=False)
+    
+    return metrics
+
+
+def train_lstm_model(atm_id, daily_demand, lookback=30, units=50, epochs=50):
+    """
+    Train LSTM model for a specific ATM
+    
+    Args:
+        atm_id: ATM identifier
+        daily_demand: DataFrame with 'date' and 'demand' columns
+        lookback: Number of past days to look back
+        units: Number of LSTM units
+        epochs: Number of training epochs
+    
+    Returns:
+        Dictionary with model metrics
+    """
+    import os
+    from datetime import datetime
+    
+    if not TENSORFLOW_AVAILABLE:
+        raise ImportError("TensorFlow is required for LSTM training")
+    
+    # Prepare data
+    demand_values = daily_demand['demand'].values
+    training_days = len(daily_demand)
+    
+    # Check if we have enough data
+    min_required = lookback + 10  # Need lookback + at least 10 days for train/test
+    if len(demand_values) < min_required:
+        raise ValueError(f'Insufficient data for LSTM: {len(demand_values)} days (need {min_required}+ days for lookback={lookback})')
+    
+    # Adjust lookback if we have limited data
+    if len(demand_values) < 50:
+        lookback = min(10, len(demand_values) // 3)  # Use smaller lookback for small datasets
+    
+    # Split into train/test (80/20)
+    split_idx = int(len(demand_values) * 0.8)
+    train_data = demand_values[:split_idx]
+    test_data = demand_values[split_idx:]
+    
+    # Ensure we have enough data for LSTM with the lookback
+    if len(train_data) <= lookback:
+        raise ValueError(f'Training data ({len(train_data)} days) is too small for lookback={lookback}. Need at least {lookback + 1} days.')
+    
+    # Train LSTM model
+    lstm = LSTMForecaster(lookback=lookback, units=units)
+    lstm.train(train_data, epochs=epochs, verbose=0)
+    
+    full_data = np.concatenate([train_data, test_data])
+    metrics = lstm.evaluate(test_data, full_data)
+    
+    # Save model
+    model_dir = os.path.join('ml_models', 'saved_models')
+    os.makedirs(model_dir, exist_ok=True)
+    model_path = os.path.join(model_dir, f'lstm_model_atm_{atm_id}.h5')
+    
+    lstm.model.save(model_path)
+    
+    # Save or append metrics in the same format as existing CSVs
+    metrics_path = os.path.join(model_dir, f'model_metrics_atm_{atm_id}.csv')
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    lstm_metrics_df = pd.DataFrame([{
+        'atm_id': atm_id,
+        'model_type': 'LSTM',
+        'mae': metrics['MAE'],
+        'rmse': metrics['RMSE'],
+        'mape': metrics['MAPE'],
+        'training_days': training_days,
+        'trained_date': current_time
+    }])
+    
+    if os.path.exists(metrics_path):
+        # Read existing data and append
+        existing_metrics = pd.read_csv(metrics_path)
+        metrics_df = pd.concat([existing_metrics, lstm_metrics_df], ignore_index=True)
+        metrics_df.to_csv(metrics_path, index=False)
+    else:
+        lstm_metrics_df.to_csv(metrics_path, index=False)
+    
+    return metrics
+
+
+def train_models_for_atm(atm_id, daily_demand, models=['arima', 'lstm']):
+    """
+    Train multiple models for a specific ATM
+    
+    Args:
+        atm_id: ATM identifier
+        daily_demand: DataFrame with 'date' and 'demand' columns
+        models: List of models to train ['arima', 'lstm']
+    
+    Returns:
+        Dictionary with results for each model
+    """
+    results = {}
+    
+    if 'arima' in models:
+        try:
+            arima_metrics = train_arima_model(atm_id, daily_demand)
+            results['arima'] = arima_metrics
+        except Exception as e:
+            results['arima'] = {'error': str(e)}
+    
+    if 'lstm' in models:
+        try:
+            lstm_metrics = train_lstm_model(atm_id, daily_demand)
+            results['lstm'] = lstm_metrics
+        except Exception as e:
+            results['lstm'] = {'error': str(e)}
+    
+    return results
+

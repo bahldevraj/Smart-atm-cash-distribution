@@ -12,15 +12,13 @@ import pickle
 import os
 import sys
 
+# Use centralized path configuration
+from path_config import get_saved_models_dir, get_model_path
+
 # Create blueprint for AI recommendations
 ai_recommendations_bp = Blueprint('ai_recommendations', __name__, url_prefix='/api/ai')
 
-# Add ml_models to path
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ml_models_path = os.path.join(project_root, 'ml_models')
-sys.path.insert(0, ml_models_path)
-
-MODEL_DIR = os.path.join(project_root, 'ml_models', 'saved_models')
+MODEL_DIR = str(get_saved_models_dir())
 
 
 class SmartRecommendationEngine:

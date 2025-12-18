@@ -2,3 +2,10 @@ post 7 semester improvements towards project : ATM Cash Distribution System
 1. access control
 2. dashboard chards/ graphs improvements
 3. Vehicle Routing Optimization
+4. Web based atm training
+
+
+
+Note: check whether 'daily demand' has any use case or is it redundant? 
+ - add an option to toggle om/off atm for demo purposes
+ - as after19 dec, when new atm model is created, it is stored in different location from the original 15 models - not resolved yet
