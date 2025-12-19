@@ -2181,6 +2181,40 @@ def get_atm_data_status(atm_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/atms/<int:atm_id>/demand-history', methods=['GET'])
+def get_atm_demand_history(atm_id):
+    """Get demand history data for an ATM (used for training data display)"""
+    try:
+        # Check if ATM exists
+        atm = ATM.query.get(atm_id)
+        if not atm:
+            return jsonify({'error': 'ATM not found'}), 404
+
+        # Get demand history records
+        history_records = DemandHistory.query.filter_by(atm_id=atm_id).order_by(DemandHistory.date).all()
+
+        # Format for frontend
+        demand_data = []
+        for record in history_records:
+            demand_data.append({
+                'date': record.date.isoformat(),
+                'demand': record.demand,
+                'formatted_date': record.date.strftime('%Y-%m-%d'),
+                'formatted_demand': f"${record.demand:,.2f}"
+            })
+
+        return jsonify({
+            'atm_id': atm_id,
+            'atm_name': atm.name,
+            'total_records': len(demand_data),
+            'demand_history': demand_data,
+            'has_training_data': len(demand_data) > 0
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 def get_training_recommendation(transaction_count: int, has_model: bool) -> str:
     """Generate training recommendation message"""
     if has_model:

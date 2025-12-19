@@ -89,12 +89,18 @@ const SmartATMDashboard = () => {
             const timestamp = new Date().getTime();
             const [vaultsRes, atmsRes, transactionsRes, analyticsRes] =
                 await Promise.all([
-                    fetch(`${API_BASE}/vaults?_=${timestamp}`).then((r) => r.json()),
-                    fetch(`${API_BASE}/atms?_=${timestamp}`).then((r) => r.json()),
-                    fetch(`${API_BASE}/transactions?_=${timestamp}`).then((r) => r.json()),
-                    fetch(`${API_BASE}/analytics/dashboard?_=${timestamp}`).then((r) =>
+                    fetch(`${API_BASE}/vaults?_=${timestamp}`).then((r) =>
                         r.json()
                     ),
+                    fetch(`${API_BASE}/atms?_=${timestamp}`).then((r) =>
+                        r.json()
+                    ),
+                    fetch(`${API_BASE}/transactions?_=${timestamp}`).then((r) =>
+                        r.json()
+                    ),
+                    fetch(
+                        `${API_BASE}/analytics/dashboard?_=${timestamp}`
+                    ).then((r) => r.json()),
                 ]);
 
             console.log("✅ Data loaded:", {
@@ -104,7 +110,14 @@ const SmartATMDashboard = () => {
             });
             console.log(
                 "ATMs:",
-                atmsRes.map((a) => `${a.id}. ${a.name} - Profile: ${a.detected_profile || 'auto'}`).join(", ")
+                atmsRes
+                    .map(
+                        (a) =>
+                            `${a.id}. ${a.name} - Profile: ${
+                                a.detected_profile || "auto"
+                            }`
+                    )
+                    .join(", ")
             );
 
             setVaults(vaultsRes);
@@ -342,16 +355,16 @@ const SmartATMDashboard = () => {
         [fetchData]
     );
 
-    // Check authentication on mount
-    useEffect(() => {
-        const token = localStorage.getItem("token");
-        const user = localStorage.getItem("user");
-
-        if (token && user) {
-            setIsAuthenticated(true);
-            setCurrentUser(JSON.parse(user));
-        }
-    }, []);
+    // Check authentication on mount - DISABLED: Always start with login page
+    // useEffect(() => {
+    //     const token = localStorage.getItem("token");
+    //     const user = localStorage.getItem("user");
+    //
+    //     if (token && user) {
+    //         setIsAuthenticated(true);
+    //         setCurrentUser(JSON.parse(user));
+    //     }
+    // }, []);
 
     // Helper function to get auth headers
     const getAuthHeaders = () => {
@@ -3573,18 +3586,18 @@ const SmartATMDashboard = () => {
         useEffect(() => {
             const fetchProfiles = async () => {
                 try {
-                    const token = localStorage.getItem('token');
+                    const token = localStorage.getItem("token");
                     const response = await fetch(`${API_BASE}/profiles`, {
                         headers: {
-                            'Authorization': `Bearer ${token}`
-                        }
+                            Authorization: `Bearer ${token}`,
+                        },
                     });
                     if (response.ok) {
                         const data = await response.json();
                         setAvailableProfiles(data);
                     }
                 } catch (error) {
-                    console.error('Failed to fetch profiles:', error);
+                    console.error("Failed to fetch profiles:", error);
                 }
             };
             fetchProfiles();
@@ -3786,70 +3799,104 @@ const SmartATMDashboard = () => {
                                 className="border border-gray-300 rounded-md px-3 py-2 col-span-3"
                                 required
                             />
-                            
+
                             {/* Profile Override Selector */}
                             <div className="col-span-3">
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
                                     Profile Override (Optional)
                                 </label>
                                 <select
-                                    value={formData.profile_override_type === 'preset' ? formData.profile_override : 
-                                           formData.profile_override_type === 'custom' ? `custom_${formData.profile_override_id}` : 
-                                           'auto'}
+                                    value={
+                                        formData.profile_override_type ===
+                                        "preset"
+                                            ? formData.profile_override
+                                            : formData.profile_override_type ===
+                                              "custom"
+                                            ? `custom_${formData.profile_override_id}`
+                                            : "auto"
+                                    }
                                     onChange={(e) => {
                                         const value = e.target.value;
-                                        if (value === 'auto') {
+                                        if (value === "auto") {
                                             setFormData({
                                                 ...formData,
                                                 profile_override: null,
                                                 profile_override_type: null,
-                                                profile_override_id: null
+                                                profile_override_id: null,
                                             });
-                                        } else if (value.startsWith('custom_')) {
-                                            const customId = parseInt(value.replace('custom_', ''));
-                                            const customProfile = availableProfiles.find(p => p.id === customId);
+                                        } else if (
+                                            value.startsWith("custom_")
+                                        ) {
+                                            const customId = parseInt(
+                                                value.replace("custom_", "")
+                                            );
+                                            const customProfile =
+                                                availableProfiles.find(
+                                                    (p) => p.id === customId
+                                                );
                                             setFormData({
                                                 ...formData,
-                                                profile_override: customProfile?.name,
-                                                profile_override_type: 'custom',
-                                                profile_override_id: customId
+                                                profile_override:
+                                                    customProfile?.name,
+                                                profile_override_type: "custom",
+                                                profile_override_id: customId,
                                             });
                                         } else {
                                             setFormData({
                                                 ...formData,
                                                 profile_override: value,
-                                                profile_override_type: 'preset',
-                                                profile_override_id: null
+                                                profile_override_type: "preset",
+                                                profile_override_id: null,
                                             });
                                         }
                                     }}
                                     className="w-full border border-gray-300 rounded-md px-3 py-2"
                                 >
-                                    <option value="auto">Auto-detect from location</option>
+                                    <option value="auto">
+                                        Auto-detect from location
+                                    </option>
                                     <optgroup label="Preset Profiles">
-                                        {availableProfiles.filter(p => p.is_preset).map(profile => (
-                                            <option key={profile.name} value={profile.name}>
-                                                {profile.name.replace(/_/g, ' ')} ({profile.usage_count} ATMs)
-                                            </option>
-                                        ))}
-                                    </optgroup>
-                                    {availableProfiles.filter(p => !p.is_preset).length > 0 && (
-                                        <optgroup label="Custom Profiles">
-                                            {availableProfiles.filter(p => !p.is_preset).map(profile => (
-                                                <option key={profile.id} value={`custom_${profile.id}`}>
-                                                    {profile.name} ({profile.usage_count} ATMs)
+                                        {availableProfiles
+                                            .filter((p) => p.is_preset)
+                                            .map((profile) => (
+                                                <option
+                                                    key={profile.name}
+                                                    value={profile.name}
+                                                >
+                                                    {profile.name.replace(
+                                                        /_/g,
+                                                        " "
+                                                    )}{" "}
+                                                    ({profile.usage_count} ATMs)
                                                 </option>
                                             ))}
+                                    </optgroup>
+                                    {availableProfiles.filter(
+                                        (p) => !p.is_preset
+                                    ).length > 0 && (
+                                        <optgroup label="Custom Profiles">
+                                            {availableProfiles
+                                                .filter((p) => !p.is_preset)
+                                                .map((profile) => (
+                                                    <option
+                                                        key={profile.id}
+                                                        value={`custom_${profile.id}`}
+                                                    >
+                                                        {profile.name} (
+                                                        {profile.usage_count}{" "}
+                                                        ATMs)
+                                                    </option>
+                                                ))}
                                         </optgroup>
                                     )}
                                 </select>
                                 <p className="text-xs text-gray-500 mt-1">
-                                    {formData.profile_override_type ? 
-                                        `Using ${formData.profile_override_type} profile: ${formData.profile_override}` : 
-                                        'Profile will be auto-detected from ATM name and location'}
+                                    {formData.profile_override_type
+                                        ? `Using ${formData.profile_override_type} profile: ${formData.profile_override}`
+                                        : "Profile will be auto-detected from ATM name and location"}
                                 </p>
                             </div>
-                            
+
                             <button
                                 type="submit"
                                 className="col-span-3 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md"
@@ -3938,7 +3985,10 @@ const SmartATMDashboard = () => {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                                             {atm.detected_profile ? (
                                                 <span className="px-2 py-1 text-xs rounded-md bg-purple-100 text-purple-800 font-medium">
-                                                    {atm.detected_profile.replace(/_/g, ' ')}
+                                                    {atm.detected_profile.replace(
+                                                        /_/g,
+                                                        " "
+                                                    )}
                                                 </span>
                                             ) : (
                                                 <span className="text-xs text-gray-400">
@@ -3974,7 +4024,7 @@ const SmartATMDashboard = () => {
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            {atm.mape === 'outdated' ? (
+                                            {atm.mape === "outdated" ? (
                                                 <div className="flex flex-col gap-1">
                                                     <span className="px-2 py-1 text-xs rounded-full font-medium bg-orange-100 text-orange-800">
                                                         ⚠ Outdated
@@ -4285,7 +4335,9 @@ const SmartATMDashboard = () => {
                                 {/* Admin-only Profile Manager */}
                                 {currentUser?.is_root && (
                                     <button
-                                        onClick={() => setActiveTab("profile-manager")}
+                                        onClick={() =>
+                                            setActiveTab("profile-manager")
+                                        }
                                         className={`w-full flex items-center px-4 py-2 text-left rounded-md transition-colors ${
                                             activeTab === "profile-manager"
                                                 ? "bg-purple-50 text-purple-700 border-r-2 border-purple-500"
